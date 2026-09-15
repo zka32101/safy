@@ -1,0 +1,96 @@
+{
+  "moduleId": "tier1-operations",
+  "title": "Operations・監視体制",
+  "description": "監視・アラート設定、性能最適化、エラーハンドリング、24/7 サポート体制構築",
+  "passThresholdDefault": 80,
+  "category": "operations",
+  "duration": "4時間",
+  "lessons": [
+    {
+      "id": "lesson-001",
+      "title": "Monitoring & Alerting Setup",
+      "order": 1,
+      "body": "本番環境では 24/7 の監視が必須です。Google Cloud Monitoring（旧 Stackdriver）を中心に、多層監視を構築しています。\n\n【主要メトリクス】\n\n1. Cloud Functions メトリクス:\n  - 実行時間（Latency P50/P95/P99）\n  - エラーレート\n  - メモリ使用率\n  - 実行回数\n\n2. Firestore メトリクス:\n  - 読み取り/書き込み回数\n  - クエリレイテンシ\n  - 保存されたデータサイズ\n  - 接続プール使用率\n\n3. API メトリクス:\n  - レスポンスタイム\n  - HTTP ステータスコード分布\n  - リクエストレート\n\n【アラート設定】\n\n1. 高優先度（即座に対応）:\n  - エラーレート > 1% （5分以上継続）→ PagerDuty\n  - Cloud Functions timeout > 5回/時間 → PagerDuty\n  - API 可用性 < 99% → PagerDuty\n\n2. 中優先度（1時間以内に確認）:\n  - P99 レイテンシ > 1秒\n  - メモリ使用率 > 80%\n  - Firestore quota 使用率 > 80%\n\n3. 低優先度（1営業日以内に確認）:\n  - 監視対象外の警告メッセージ\n  - 使用パターンの変化\n\n【Slack 統合】\n\n本番環境アラートが自動的に Slack に投稿:\n- #firebase-alerts : Firebase 関連\n- #api-errors : API エラー\n- #deployment-status : デプロイ状況\n\n緊急時は @oncall に mention 付きで通知。\n\n【ダッシュボード】\n\nCloud Console に複数のダッシュボード構築:\n\n1. Executive Summary (CEO/CTO 向け):\n  - 本日の稼働率（%）\n  - ユーザーアクティビティ（DAU）\n  - エラー件数\n  - 重要な alert 一覧\n\n2. Engineering Operations (DevOps 向け):\n  - Functions 実行時間（時系列）\n  - エラーレート（関数別）\n  - Firestore 操作数（コレクション別）\n  - 最新アラート履歴\n\n3. Capacity Planning (容量企画用):\n  - メモリ/CPU 使用トレンド\n  - データベースサイズ増加率\n  - ストレージ使用量\n  - 予測容量（30日後/90日後）"
+    },
+    {
+      "id": "lesson-002",
+      "title": "Performance Optimization Techniques",
+      "order": 2,
+      "body": "アプリケーションの性能は ユーザー体験に直結します。本番環境では以下の最適化を実施しています。\n\n【Cloud Functions 最適化】\n\n1. コールドスタート対策:\n  - 関数の事前ウォーム（定期的なダミー実行）\n  - 最小メモリ割り当て: 512MB\n  - 依存パッケージの精選（不要な require を削除）\n  - Bundle サイズ最小化（10MB 以下）\n\n2. キャッシング:\n  - メモリキャッシュ（in-process）: 企業設定・モジュール情報など\n  - TTL: 5分～30分で自動破棄\n  - キャッシュヒット率: 目標 70%+\n\n3. 並列処理:\n  - Promise.all() で複数の読み込みを並列化\n  - Firestore batch 読み込みで RPC 削減\n\n【Firestore 最適化】\n\n1. クエリ設計:\n  - 複合インデックスで昇順・降順を効率化\n  - limit() で大量データ読み込みを制限\n  - offset は避け、cursor-based pagination 採用\n\n2. ホットコレクション対策:\n  - 高頻度更新の counters は分散（sharding）\n  - 一社の students/ は 1000+ ドキュメントなら partitioning\n\n3. 書き込み最適化:\n  - batch write で複数ドキュメント一括更新\n  - serverTimestamp() で統一フォーマット\n\n【API レスポンス時間分析】\n\nエンドツーエンドレイテンシ分解:\n\n- ネットワーク往復（client ↔ server）: ~100ms\n- Cloud Functions 実行: ~200ms\n- Firestore 読み書き: ~50ms\n- データシリアライズ: ~10ms\n\n目標: 合計 < 500ms（P95）、< 1000ms（P99）\n\n【キャパシティプランニング】\n\nユーザー数 100 名時:\n- 同時接続: 1-2\n- API 呼び出し/分: 10-20\n- Firestore 読み書き/分: 50-100\n\nユーザー数 1000 名時（Nov 1 soft launch）:\n- 同時接続: 10-20\n- API 呼び出し/分: 100-200\n- Firestore 読み書き/分: 500-1000\n\nユーザー数 5000+ 名時（Dec 1 full launch）:\n- 同時接続: 50-100\n- API 呼び出し/分: 500-1000\n- Firestore 読み書き/分: 2500-5000"
+    },
+    {
+      "id": "lesson-003",
+      "title": "Error Handling & Debugging",
+      "order": 3,
+      "body": "本番環境ではあらゆるエラーが予期されます。適切なハンドリングとログ記録が本番安定性を左右します。\n\n【エラー分類】\n\n1. 一時的エラー（リトライ可能）:\n  - Deadline exceeded（タイムアウト）\n  - 一時的なネットワーク障害\n  - Firestore quota 一時的超過\n  - 対応: 指数バックオフでリトライ（max 3回）\n\n2. 永続的エラー（リトライ不可）:\n  - 認証失敗\n  - 権限不足\n  - データ不正形式\n  - 対応: ユーザーへエラー通知、ログ記録\n\n3. 予期しないエラー（要調査）:\n  - Null pointer exception\n  - メモリ不足\n  - スタックトレース記録\n  - 対応: 開発チームにエスカレーション\n\n【ログ記録】\n\nすべての関数で以下を記録（JSON フォーマット）:\n\n```json\n{\n  \"timestamp\": \"2026-09-15T09:30:45.123Z\",\n  \"severity\": \"ERROR\",\n  \"function\": \"submitQuizAttempt\",\n  \"companyId\": \"company-123\",\n  \"userId\": \"user-456\",\n  \"message\": \"Firestore write failed\",\n  \"error\": {\n    \"code\": \"permission-denied\",\n    \"message\": \"User lacks required permissions\",\n    \"stack\": \"...\"\n  },\n  \"context\": {\n    \"moduleId\": \"module-789\",\n    \"attemptedAction\": \"recordQuizAttempt\",\n    \"duration_ms\": 245\n  }\n}\n```\n\n【デバッグ手法】\n\n1. ローカル開発:\n  - Firebase Emulator Suite で本番と同じ環境をシミュレート\n  - console.log ではなく logger.log を使用（構造化ログ）\n  - Unit テスト（Jest）で個別関数検証\n\n2. ステージング環境:\n  - 本番データサンプルで再現\n  - エラーログを Cloud Logging で確認\n  - アラート設定をテスト\n\n3. 本番環境:\n  - Cloud Logging コンソールでリアルタイムログ検索\n  - filter: resource.type=\"cloud_function\" AND severity=\"ERROR\"\n  - 時系列でエラーパターン分析\n\n【一般的なエラーと対応】\n\nエラー: \"Permission denied\"\n原因: Firestore security rules で拒否\n対応: rules ファイル確認、ユーザー権限確認\n\nエラー: \"Timeout after 540 seconds\"\n原因: 関数実行時間が制限を超過\n対応: クエリ最適化、並列処理化、キャッシング導入\n\nエラー: \"Out of memory\"\n原因: メモリ割り当て不足\n対応: Functions メモリを 512MB → 1GB に増加\n\nエラー: \"Quota exceeded\"\n原因: Firestore 読み書き quota 超過\n対応: アーキテクチャ見直し、batch 処理導入、キャッシング強化"
+    },
+    {
+      "id": "lesson-004",
+      "title": "24/7 Support Structure & Escalation",
+      "order": 4,
+      "body": "本番環境で問題が発生した時、素早い対応が業務継続性を確保します。以下の体制を整備しています。\n\n【On-Call ローテーション】\n\nバックエンドエンジニア（Backend Lead を含む 3-4 名）で 24/7 on-call ローテーション:\n\n- 平日: 09:00～18:00 は定常シフト（最大 2 人）\n- 平日夜間: 18:00～09:00 は on-call（phone on）\n- 土日: on-call（軽微な対応のみ）\n- 有給休暇: off-call 不可（代替者配置）\n\n【アラート通知フロー】\n\n1. PagerDuty アラート発行 → on-call 担当者の phone/SMS に通知\n2. Slack #alerts チャネルに並行通知\n3. 応答なし（5分） → second on-call にエスカレート\n4. 応答なし（15分） → Backend Lead + Manager に通知\n\n【インシデント対応】\n\n発生時刻: 本番エラー確認\n\n① 応答（5分以内）:\n  - on-call 技術者が Cloud Logging 確認\n  - 影響範囲（ユーザー数・機能）を把握\n  - Slack #incident に通知\n\n② 調査（15分以内）:\n  - エラーログ詳細分析\n  - 最近デプロイとの関連確認\n  - 影響を受けた companies/users リスト作成\n\n③ 対応（30分以内）:\n  - ロールバック vs ホットフィックス を判断\n  - 対応策を実装・テスト・デプロイ\n  - 正常性確認（ダッシュボード・ログ）\n\n④ 報告（1時間以内）:\n  - 経営層に状況報告\n  - affected users に謝罪メール\n  - 内部 postmortem 開始\n\n【Postmortem 分析】\n\nインシデント解決後、48 時間以内に:\n\n1. Timeline: 事象発生～復旧の時系列\n2. Root Cause: なぜ発生したのか（根本原因）\n3. Impact: ユーザー数、機能、期間\n4. Action Items: 同じ問題を防ぐための改善\n5. Follow-up: 改善実装の進捗トラッキング\n\n【予防措置】\n\n本番障害を未然に防ぐために:\n\n- カナリアリリース: 新デプロイは 10% ユーザーから開始\n- Blue-Green デプロイ: 旧・新 environment で AB テスト\n- Staging 環境での全テスト: 本番リリース前に必須\n- Load テスト: 月 1 回、100K+ 同時接続を検証\n- Chaos Engineering: ランダムに障害を注入しテスト\n\n【SLA & 目標稼働率】\n\n- 目標稼働率: 99.9%（年間 8.76 時間の許容停止時間）\n- P95 レスポンスタイム: < 500ms\n- エラーレート: < 0.1%\n- Mean Time To Recovery (MTTR): < 30 分\n\nこれらの指標は毎月 executive team へレポートされます。"
+    }
+  ],
+  "quizQuestions": [
+    {
+      "id": "q001",
+      "question": "Cloud Functions のエラーレートがアラートしきい値を超えたのは何か？",
+      "choices": [
+        "0.5%",
+        "1%",
+        "5%",
+        "10%"
+      ],
+      "correctIndex": 1,
+      "explanation": "本アプリの SLA ではエラーレート 1% 以上が高優先度アラートとなり、即座に PagerDuty で on-call に通知されます。"
+    },
+    {
+      "id": "q002",
+      "question": "一時的エラー（deadline exceeded）が発生した場合の対応は？",
+      "choices": [
+        "即座に user に error を返す",
+        "何もしないで続行する",
+        "指数バックオフでリトライ（最大 3 回）",
+        "ログに記録して無視する"
+      ],
+      "correctIndex": 2,
+      "explanation": "一時的なタイムアウトは再試行で解決することが多いため、自動リトライが組み込まれています。待機時間は指数関数的に増加させて過負荷を避けます。"
+    },
+    {
+      "id": "q003",
+      "question": "Firestore ホットコレクション対策として正しいのはどれか？",
+      "choices": [
+        "すべての書き込みを 1 つのドキュメントに集約する",
+        "高頻度更新の counters を複数ドキュメントに分散（sharding）する",
+        "書き込み頻度を制限する",
+        "Firestore を使わず別の DB に移行する"
+      ],
+      "correctIndex": 1,
+      "explanation": "Firestore は 1 秒あたり 1 ドキュメント最大 1 回の書き込みに制限されています。高頻度更新は複数ドキュメントに分散することで回避します。"
+    },
+    {
+      "id": "q004",
+      "question": "on-call engineer が応答しない場合のエスカレーション時間は？",
+      "choices": [
+        "1 分",
+        "5 分",
+        "15 分",
+        "1 時間"
+      ],
+      "correctIndex": 1,
+      "explanation": "5 分以内に on-call が応答しない場合、second on-call にエスカレートされ、15 分でさらに Manager に報告されます。"
+    },
+    {
+      "id": "q005",
+      "question": "本番環境の稼働率目標 99.9% は年間何時間の停止を許容するか？",
+      "choices": [
+        "約 1 時間",
+        "約 3.6 時間",
+        "約 8.76 時間",
+        "約 24 時間"
+      ],
+      "correctIndex": 2,
+      "explanation": "99.9% の稼働率は 365 日 × 24 時間 × 0.1% = 約 8.76 時間の停止を許容します。"
+    }
+  ]
+}
