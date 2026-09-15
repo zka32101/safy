@@ -1,0 +1,96 @@
+{
+  "moduleId": "tier1-platform-tech",
+  "title": "Platform技術概要",
+  "description": "Firebase ecosystem、Cloud Functions、Firestore、本番環境構築の基礎知識",
+  "passThresholdDefault": 80,
+  "category": "engineering",
+  "duration": "4時間",
+  "lessons": [
+    {
+      "id": "lesson-001",
+      "title": "Firebase Ecosystem Overview",
+      "order": 1,
+      "body": "Firebase は Google Cloud Platform 上に構築されたバックエンド・プラットフォームです。本研修で使用する主要サービスは以下の通りです：\n\n【認証・ユーザー管理】\n- Firebase Authentication: Email/Password、Google OAuth、Apple Sign-In に対応\n- セッション管理: トークン有効期限は1時間以下に設定\n\n【データベース】\n- Cloud Firestore: NoSQL リアルタイムデータベース\n- リージョン: asia-northeast1 (東京)\n- セキュリティルール: ユーザー認証・会社ごとのアクセス制御\n\n【ストレージ】\n- Cloud Storage: 修了証・教材ファイル保管\n- CORS設定: クライアント側の直接アクセス対応\n- 署名付きURL: 期間限定アクセス\n\n【サーバーレス実行】\n- Cloud Functions: Node.js 20.x で実装\n- トリガー: HTTP Callable、Firestore、Cloud Scheduler\n\n【リアルタイム通信】\n- Cloud Pub/Sub: イベント駆動アーキテクチャ\n- Cloud Messaging: プッシュ通知\n\n【分析・ログ】\n- Google Analytics for Firebase: ユーザー行動分析\n- Cloud Logging: 本番環境ログ収集・監視\n\n全サービスは asia-northeast1 リージョンで統合し、マルチテナント（複数企業）対応の設計になっています。"
+    },
+    {
+      "id": "lesson-002",
+      "title": "Cloud Functions Deployment & Monitoring",
+      "order": 2,
+      "body": "Cloud Functions は本アプリの業務ロジック実行エンジンです。TypeScript で記述し、自動デプロイされます。\n\n【実装済み関数】\n\n1. submitQuizAttempt\n- 役割: クイズ採点・スコア計算・監査証跡記録\n- トリガー: Flutter クライアント → HTTP Callable\n- セキュリティ: ユーザーID・会社ID の検証、改ざん防止\n- 性能: P99 < 1000ms\n- エラーハンドリング: 自動リトライ（最大3回）\n\n2. onReminderCreated\n- 役割: 管理者の個別リマインド → プッシュ通知\n- トリガー: Firestore reminders ドキュメント作成\n- 受信者: FCM token登録済みの社員\n\n3. checkModuleDeadlinesAndNotify\n- 役割: 毎日9時に期限3日以内の未受講者に通知\n- トリガー: Cloud Scheduler (毎日 09:00 JST)\n- JST 対応: 暦日ベースの比較\n\n4. sendMonthlyReports\n- 役割: 毎月1日に月次レポートを contactEmail 宛に送信\n- トリガー: Cloud Scheduler (毎月1日 09:00 JST)\n- 送信: SendGrid API 経由\n- 失敗時: 管理者に通知メール\n\n5. generateOriginalContent\n- 役割: Claude API でプレミアムプラン向けコンテンツ自動生成\n- トリガー: Flutter 管理画面 → HTTP Callable\n- 権限: 管理者 + プレミアムプラン契約者のみ\n- エラー対応: レート制限（429）対応、自動リトライ\n\n【デプロイ手順】\n```bash\ncd functions\nnpm install\nnpm run build\nfirebase deploy --only functions --project=safy-dev-japan\n```\n\n【監視】\nCloud Logging でリアルタイムエラー監視、BigQuery へログ集約。アラート設定済み。"
+    },
+    {
+      "id": "lesson-003",
+      "title": "Firestore Architecture & Security",
+      "order": 3,
+      "body": "Firestore はスキーマレスの NoSQL データベースです。本アプリの設計原則は「マルチテナント」と「セキュリティ・バイ・デフォルト」です。\n\n【データ構造】\n\nグローバルコレクション:\n- users/ : ユーザープロフィール\n- modules/ : グローバル研修モジュール（全企業共有）\n- categories/ : コースカテゴリー\n\n会社別コレクション (companies/{companyId}/):\n- employees/ : 社員マスタ\n- enrollments/ : 受講状況\n- quizAttempts/ : クイズ実施履歴（監査証跡）\n- progressRecords/ : 進捗記録\n- certificates/ : 修了証\n- customModules/ : オリジナル研修（プレミアム機能）\n- trainingAttempts/ : Tier 1 Training 実施記録\n- subscriptions/ : 契約情報\n\n【セキュリティルール】\n\n基本原則:\n1. 認証済みユーザーのみアクセス可能\n2. 自社の employees/ のみ閲覧可能\n3. 他社データへのアクセスはブロック\n4. Cloud Functions のサーバーサイド書き込みのみ、改ざん防止\n\nルール例:\n```\nmatch /companies/{companyId}/employees/{employeeId} {\n  allow read: if request.auth.uid == employeeId;\n  allow write: if false; // Cloud Functions 経由でのみ更新\n}\n```\n\n【インデックス】\n- enrollments : (employeeId, status) の複合索引\n- quizAttempts : (employeeId, moduleId, answeredAt) の複合索引\n- trainingAttempts : (employeeId, moduleId) の複合索引\n\n【バックアップ】\n- 毎日自動エクスポート → Cloud Storage\n- 保持期間: 30日間\n- リカバリ: Firebase Console から復元可能"
+    },
+    {
+      "id": "lesson-004",
+      "title": "Production Readiness & Best Practices",
+      "order": 4,
+      "body": "本アプリが Sep 30 に本番環境へ昇格するために満たすべき要件です。\n\n【プラットフォーム要件】\n\n✅ Performance:\n- Cloud Functions 平均レイテンシー: < 200ms\n- Firestore 読み書き: < 50ms\n- API レスポンス: < 1秒\n- 同時接続: 100K+ ユーザー対応\n\n✅ Reliability:\n- 稼働率: 99.9% 以上\n- エラーレート: < 0.1%\n- 自動リトライ: Cloud Functions・API 両対応\n- サーキットブレーカー: 障害時の自動遮断\n\n✅ Security:\n- TLS 1.2+ による暗号化通信\n- データ暗号化（保存時）: 有効\n- API key ローテーション: 90日ごと\n- Secrets 管理: Firebase Functions Secrets Manager\n- IAM 権限: 最小権限原則\n\n✅ Monitoring:\n- リアルタイムログ: Cloud Logging\n- エラーアラート: Slack/PagerDuty\n- 性能ダッシュボード: Cloud Console\n- 監査ログ: Cloud Audit Logs（全操作記録）\n\n【ベストプラクティス】\n\n1. データ設計:\n  - 正規化と非正規化のバランス\n  - ホットコレクション対策（rate limit 回避）\n  - キャッシング戦略\n\n2. コード品質:\n  - TypeScript strict mode\n  - 入力値検証（サーバー側）\n  - エラーハンドリング（try-catch + logging）\n  - ユニットテスト (> 80% coverage)\n\n3. 本番運用:\n  - Blue-Green デプロイ\n  - カナリアリリース\n  - ロールバック手順（テスト済み）\n  - インシデント対応（runbook 整備）\n\n【チェックリスト】\n\n本番環境昇格前に以下を確認:\n\n□ Firebase ファイアウォールルール: 本番環境指定\n□ Cloud Functions のタイムアウト: 540秒で統一\n□ メモリ割り当て: 512MB 以上で統一\n□ Secrets ローテーション完了\n□ バックアップ自動化: 確認\n□ 監視ダッシュボード: 全アラート設定済み\n□ ステージング環境での全フロー テスト合格\n□ セキュリティ監査: OWASP Top 10 対応確認\n□ 本番環境 API endpoint の動作確認\n□ Cloudflare/WAF: DDoS 保護設定確認"
+    }
+  ],
+  "quizQuestions": [
+    {
+      "id": "q001",
+      "question": "Safy が使用する主要な Firebase サービスに含まれるのはどれか？（複数選択可）",
+      "choices": [
+        "Firebase Authentication と Cloud Firestore",
+        "Google Analytics と BigQuery",
+        "Cloud Functions と Cloud Storage",
+        "すべてを使用している"
+      ],
+      "correctIndex": 3,
+      "explanation": "Safy のアーキテクチャは Firebase 認証・Firestore DB・Functions 処理・Cloud Storage ファイル保管・Google Analytics 分析のすべてを統合しています。"
+    },
+    {
+      "id": "q002",
+      "question": "submitQuizAttempt 関数の主な役割は？",
+      "choices": [
+        "クライアント側でスコア計算した結果をそのまま保存する",
+        "改ざん防止のためサーバー側で正式なスコアを再計算してから保存する",
+        "QuizAttempts コレクションへの書き込み権限を管理画面に限定する",
+        "Firestore のリアルタイム同期を担当する"
+      ],
+      "correctIndex": 1,
+      "explanation": "Cloud Functions 内で正式なスコア再計算を行うことで、クライアント側での改ざんを防止し、監査証跡の完全性を保証します。"
+    },
+    {
+      "id": "q003",
+      "question": "Cloud Functions のエラー時の対応として正しいのはどれか？",
+      "choices": [
+        "エラーが発生したら即座にユーザーに通知する",
+        "自動リトライは実装しない（シンプルにするため）",
+        "エラーログを Cloud Logging に記録し、自動リトライを実施する",
+        "エラーは無視して続行する"
+      ],
+      "correctIndex": 2,
+      "explanation": "本番環境ではエラーハンドリングが重要です。ログ記録と自動リトライで一時的な障害に耐性を持たせます。"
+    },
+    {
+      "id": "q004",
+      "question": "Firestore のセキュリティルール設計で最も重要な原則は？",
+      "choices": [
+        "すべてのユーザーが全データにアクセスできるようにする",
+        "認証済みユーザーのみアクセス可能にし、マルチテナント対応で自社データのみ許可する",
+        "ファイアウォール設定だけで十分である",
+        "セキュリティルールは無視してよい"
+      ],
+      "correctIndex": 1,
+      "explanation": "マルチテナント環境では、認証 + 会社別アクセス制御が必須です。他社のデータへのアクセスは必ずブロックします。"
+    },
+    {
+      "id": "q005",
+      "question": "本番環境での稼働率目標は？",
+      "choices": [
+        "95% 以上",
+        "99% 以上",
+        "99.9% 以上",
+        "100%（完全停止なし）"
+      ],
+      "correctIndex": 2,
+      "explanation": "エンタープライズ向けアプリケーションの標準的な SLA は 99.9% です。これは年間約 8.76 時間の停止を許容します。"
+    }
+  ]
+}

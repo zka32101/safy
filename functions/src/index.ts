@@ -77,8 +77,25 @@ interface EmployeeDoc {
 // ─────────────────────────────────────────────
 // submitQuizAttempt: クイズ採点・QuizAttempt/CompletionCertificate書き込み
 // 改ざん防止のためクライアントから直接書き込ませず、ここで正式なスコアを再計算する。
+// エラー時は自動リトライを実施(最大3回)。
 // ─────────────────────────────────────────────
-export const submitQuizAttempt = onCall(async (request) => {
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+
+async function submitQuizAttemptWithRetry(request: any, retryCount = 0): Promise<any> {
+  try {
+    return await submitQuizAttemptImpl(request);
+  } catch (error: any) {
+    if (retryCount < MAX_RETRIES && (error.code === "deadline-exceeded" || error.code === "aborted")) {
+      logger.warn(`submitQuizAttempt リトライ ${retryCount + 1}/${MAX_RETRIES}: ${error.message}`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+      return submitQuizAttemptWithRetry(request, retryCount + 1);
+    }
+    throw error;
+  }
+}
+
+async function submitQuizAttemptImpl(request: any) {
   const auth = request.auth;
   if (!auth) {
     throw new HttpsError("unauthenticated", "サインインが必要です");
@@ -201,7 +218,9 @@ export const submitQuizAttempt = onCall(async (request) => {
     selectedAnswers,
     answeredAt: Date.now(),
   };
-});
+}
+
+export const submitQuizAttempt = onCall(submitQuizAttemptWithRetry);
 
 // ─────────────────────────────────────────────
 // onReminderCreated: 管理者の個別リマインド送信(ReminderService.sendReminder)を
@@ -358,8 +377,27 @@ export const sendMonthlyReports = onSchedule(
             `詳細はアプリの「レポート出力」画面からPDF/CSVでご確認いただけます。\n\n` +
             `安心企業研修Safy`,
         });
+        logger.info(`月次レポートメール送信成功 companyId=${companyId} to=${contactEmail}`);
       } catch (error) {
-        logger.warn(`月次レポートメール送信に失敗しました companyId=${companyId}`, error);
+        logger.error(`月次レポートメール送信に失敗しました companyId=${companyId}`, error);
+        // 失敗時は Cloud Logging に記録し、管理者に通知メール送信を試みる
+        try {
+          const adminEmails = fromEmail; // 送信元アドレスで通知
+          await sgMail.send({
+            to: adminEmails,
+            from: fromEmail,
+            subject: `【重要】【安心企業研修Safy】月次レポート送信エラー - ${companyId}`,
+            text:
+              `月次レポートの自動送信に失敗しました。\n\n` +
+              `会社ID: ${companyId}\n` +
+              `会社名: ${company.name ?? "不明"}\n` +
+              `対象メールアドレス: ${contactEmail}\n` +
+              `エラー内容: ${error instanceof Error ? error.message : String(error)}\n\n` +
+              `管理ダッシュボードで詳細を確認し、対応してください。`,
+          });
+        } catch (notifyError) {
+          logger.error(`失敗通知メール送信にも失敗しました companyId=${companyId}`, notifyError);
+        }
       }
     }
   }
@@ -491,22 +529,44 @@ export const generateOriginalContent = onCall(
       "不正解の選択肢も「もっともらしいが誤り」であるようにしてください。";
 
     let parsed: z.infer<typeof schema>;
-    try {
-      const response = await anthropic.beta.messages.parse({
-        model: "claude-opus-5",
-        max_tokens: 8000,
-        messages: [{ role: "user", content: prompt }],
-        output_format: betaZodOutputFormat(schema),
-      });
-      if (!response.parsed_output) {
-        throw new Error("parsed_output is null");
+    let retries = 0;
+    const maxRetries = 2;
+
+    while (retries <= maxRetries) {
+      try {
+        const response = await anthropic.beta.messages.parse({
+          model: "claude-opus-5",
+          max_tokens: 8000,
+          messages: [{ role: "user", content: prompt }],
+          output_format: betaZodOutputFormat(schema),
+        });
+        if (!response.parsed_output) {
+          throw new Error("parsed_output is null");
+        }
+        parsed = response.parsed_output;
+        logger.info(`AIコンテンツ生成成功 companyId=${companyId} mode=${mode}`);
+        return parsed;
+      } catch (error: any) {
+        // レート制限(429)またはタイムアウト時はリトライ
+        if ((error.status === 429 || error.code === "deadline-exceeded") && retries < maxRetries) {
+          const backoffMs = Math.pow(2, retries) * 1000 + Math.random() * 1000;
+          logger.warn(
+            `AIコンテンツ生成リトライ ${retries + 1}/${maxRetries}: ${error.message}, ${Math.round(backoffMs)}ms後に再試行`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          retries++;
+          continue;
+        }
+
+        logger.error(`AIコンテンツ生成に失敗しました companyId=${companyId} mode=${mode}`, error);
+        const errorMessage =
+          error.status === 429
+            ? "現在、AIコンテンツ生成が混雑しています。少し時間をおいてからお試しください。"
+            : "AIによるコンテンツ生成に失敗しました。もう一度お試しください";
+        throw new HttpsError("internal", errorMessage);
       }
-      parsed = response.parsed_output;
-    } catch (error) {
-      logger.error(`AIコンテンツ生成に失敗しました companyId=${companyId}`, error);
-      throw new HttpsError("internal", "AIによるコンテンツ生成に失敗しました。もう一度お試しください");
     }
 
-    return parsed;
+    throw new HttpsError("internal", "AIコンテンツ生成に失敗しました。もう一度お試しください");
   }
 );
