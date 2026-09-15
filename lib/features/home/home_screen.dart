@@ -17,6 +17,7 @@ import '../my_growth/my_growth_screen.dart';
 import '../certificates/my_certificates_screen.dart';
 import '../admin/team_management/team_management_screen.dart';
 import '../paywall/paywall_screen.dart';
+import '../training/training_dashboard_screen.dart';
 import '../../widgets/error_retry_view.dart';
 import '../../widgets/skeleton_loader.dart';
 import '../../widgets/empty_state_view.dart';
@@ -163,6 +164,67 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   return ListView(
                     padding: const EdgeInsets.only(top: 8, bottom: 16),
                     children: [
+                      // Tier 1 Training セクション（Sep 16-22 自習期間用）
+                      Card(
+                        color: Colors.indigo.withOpacity(0.1),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const TrainingDashboardScreen(),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.school,
+                                  color: Colors.indigo[700],
+                                  size: 24,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Tier 1 Training',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.indigo[700],
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      const Text(
+                                        'Sep 16-22 自習期間',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '4つのモジュール、計16時間',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.chevron_right,
+                                  color: Colors.indigo[700],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       if (focusModule != null)
                         Card(
                           color: colorScheme.primaryContainer,
