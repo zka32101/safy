@@ -975,3 +975,117 @@ export const seedTier1ModulesOnSchedule = onSchedule("2026-09-16 00:00:00 Asia/T
     logger.error(`Tier 1 Training モジュール自動シードに失敗: ${error.message}`, error);
   }
 });
+
+/// ユーザーフィードバック送信
+export const submitUserFeedback = onCall(async (request) => {
+  const {
+    companyId,
+    employeeId,
+    email,
+    npsScore,
+    topics,
+    feedback,
+    feedbackType,
+  } = request.data;
+
+  try {
+    if (!companyId || !employeeId || !feedback || feedback.trim() === "") {
+      throw new HttpsError(
+        "invalid-argument",
+        "必須項目が不足しています"
+      );
+    }
+
+    if (typeof npsScore !== "number" || npsScore < 0 || npsScore > 10) {
+      throw new HttpsError(
+        "invalid-argument",
+        "NPS スコアは 0 ～ 10 の範囲で指定してください"
+      );
+    }
+
+    const feedbackId = db.collection("feedback").doc().id;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    await db.collection("feedback").doc(feedbackId).set({
+      id: feedbackId,
+      companyId,
+      employeeId,
+      email: email || "",
+      npsScore,
+      topics: topics || [],
+      feedback: feedback.trim(),
+      feedbackType: feedbackType || "general",
+      sentiment: _analyzeSentiment(feedback),
+      createdAt: now,
+      updatedAt: now,
+      archived: false,
+    });
+
+    logger.info(
+      `ユーザーフィードバック受信: ${feedbackId} (従業員: ${employeeId}, NPS: ${npsScore})`
+    );
+
+    // フィードバック受信通知をBigQueryに記録（分析用）
+    await db.collection("analytics_events").doc().set({
+      event: "feedback_submitted",
+      companyId,
+      employeeId,
+      npsScore,
+      feedbackType,
+      timestamp: now,
+    });
+
+    return {
+      success: true,
+      feedbackId,
+      message: "フィードバックをお送りいただきありがとうございます",
+    };
+  } catch (error: any) {
+    logger.error(`フィードバック送信に失敗: ${error.message}`, error);
+    throw new HttpsError(
+      "internal",
+      `フィードバック送信に失敗しました: ${error.message}`
+    );
+  }
+});
+
+/// フィードバック分析用のセンチメント判定（簡易版）
+function _analyzeSentiment(text: string): string {
+  const positiveKeywords = [
+    "良い",
+    "すごい",
+    "最高",
+    "素晴らしい",
+    "気に入った",
+    "わかりやすい",
+    "面白い",
+    "役に立つ",
+    "おすすめ",
+  ];
+  const negativeKeywords = [
+    "悪い",
+    "つまらない",
+    "わかりにくい",
+    "難しい",
+    "退屈",
+    "不満",
+    "イライラ",
+    "改善",
+    "問題",
+  ];
+
+  let positiveCount = 0;
+  let negativeCount = 0;
+
+  const lowerText = text.toLowerCase();
+  for (const keyword of positiveKeywords) {
+    if (lowerText.includes(keyword)) positiveCount++;
+  }
+  for (const keyword of negativeKeywords) {
+    if (lowerText.includes(keyword)) negativeCount++;
+  }
+
+  if (positiveCount > negativeCount) return "positive";
+  if (negativeCount > positiveCount) return "negative";
+  return "neutral";
+}

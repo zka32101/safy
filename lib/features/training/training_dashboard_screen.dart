@@ -11,6 +11,7 @@ import '../lesson/lesson_screen.dart';
 import '../../widgets/error_retry_view.dart';
 import '../../widgets/skeleton_loader.dart';
 import '../../widgets/empty_state_view.dart';
+import 'user_feedback_screen.dart';
 
 // Firestore リアルタイムプロバイダー: 全 Tier 1 Training モジュールの進捗状況
 final trainingProgressProvider = StreamProvider.autoDispose<List<TrainingProgress>>((ref) {
@@ -432,6 +433,25 @@ class _TrainingDashboardScreenState
               fontSize: 12,
               color: Colors.red[700],
               fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const UserFeedbackScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.feedback),
+              label: const Text('フィードバックを送信'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
             ),
           ),
         ],
