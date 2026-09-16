@@ -156,6 +156,47 @@ service cloud.firestore {
           allow write: if isAdmin(companyId);
         }
       }
+
+      // --- Phase 2b: 従業員診断とレベル判定 ---
+      match /employeeDiagnostics/{diagnosticId} {
+        allow read: if isCompanyMember(companyId) &&
+          (isAdmin(companyId) || resource.data.employeeId == request.auth.uid);
+        // Cloud Functions経由でのみ書き込み可(クライアント書き込み禁止)
+        allow write: if false;
+      }
+
+      // --- Phase 2b: 学習パス(パーソナライゼーション) ---
+      match /learningPaths/{pathId} {
+        allow read: if isCompanyMember(companyId);
+        allow write: if false; // Cloud Functions経由でのみ管理
+      }
+
+      // --- Phase 2b: Q&Aフォーラム ---
+      match /qaForum/{questionId} {
+        // 全従業員が質問一覧を読み取り可
+        allow read: if isCompanyMember(companyId);
+        // 質問投稿はCloud Functions経由(submitQuestion)
+        allow create: if false;
+        allow update: if false;
+        allow delete: if isAdmin(companyId);
+
+        // 質問に対する回答
+        match /answers/{answerId} {
+          allow read: if isCompanyMember(companyId);
+          // 回答投稿はCloud Functions経由(submitAnswer)
+          allow create: if false;
+          allow update: if isAdmin(companyId) || resource.data.authorId == request.auth.uid;
+          allow delete: if isAdmin(companyId) || resource.data.authorId == request.auth.uid;
+        }
+      }
+
+      // --- ユーザーフィードバック(NPS・感情分析) ---
+      match /userFeedback/{feedbackId} {
+        allow read: if isAdmin(companyId);
+        allow create: if isCompanyMember(companyId);
+        allow update: if false;
+        allow delete: if isAdmin(companyId);
+      }
     }
   }
 }
