@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/session_provider.dart';
 import '../industry_selection/industry_selection_screen.dart';
-import '../home/home_screen.dart';
+import '../dashboard/app_shell.dart';
 import '../admin/company_profile/company_profile_screen.dart';
 
 /// Aha Moment動線の入口: チームID(招待コード)入力 or 個人登録
@@ -85,7 +85,7 @@ class _InviteEntryScreenState extends ConsumerState<InviteEntryScreen> {
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => const AppShell()),
       );
     } catch (e) {
       setState(() {

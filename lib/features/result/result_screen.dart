@@ -4,7 +4,7 @@ import '../../data/models/module_model.dart';
 import '../../data/models/quiz_attempt_model.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/session_provider.dart';
-import '../home/home_screen.dart';
+import '../dashboard/app_shell.dart';
 import '../lesson/lesson_screen.dart';
 import '../../widgets/success_checkmark.dart';
 
@@ -58,7 +58,7 @@ class ResultScreen extends ConsumerWidget {
                     }
                     if (!context.mounted) return;
                     Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const HomeScreen()),
+                      MaterialPageRoute(builder: (_) => const AppShell()),
                       (route) => false,
                     );
                   },
