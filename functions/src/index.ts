@@ -1277,3 +1277,175 @@ export const completeLevelDiagnostic = onCall(async (request) => {
     );
   }
 });
+
+/// Q&Aフォーラム：質問投稿
+export const submitQuestion = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
+  const { companyId, employeeId, title, description, category } = request.data as {
+    companyId?: string;
+    employeeId?: string;
+    title?: string;
+    description?: string;
+    category?: string;
+  };
+
+  if (!companyId || !title || title.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "会社IDとタイトルが必要です");
+  }
+
+  if (auth.uid !== employeeId) {
+    throw new HttpsError("permission-denied", "本人以外が投稿できません");
+  }
+
+  // 入力値検証
+  if (title.length > 200) {
+    throw new HttpsError("invalid-argument", "タイトルは200文字以下である必要があります");
+  }
+  if ((description || "").length > 1000) {
+    throw new HttpsError("invalid-argument", "説明は1000文字以下である必要があります");
+  }
+
+  // レート制限チェック（5分以上間隔）
+  const lastQuestion = await db
+    .collection("companies")
+    .doc(companyId)
+    .collection("qaForum")
+    .where("authorId", "==", employeeId)
+    .orderBy("createdAt", "desc")
+    .limit(1)
+    .get();
+
+  if (lastQuestion.docs.length > 0) {
+    const lastCreated = lastQuestion.docs[0].data().createdAt.toDate();
+    const now = new Date();
+    if (now.getTime() - lastCreated.getTime() < 5 * 60 * 1000) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "質問は5分以上間隔をあけて投稿できます"
+      );
+    }
+  }
+
+  try {
+    const questionId = db.collection("questions").doc().id;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("qaForum")
+      .doc(questionId)
+      .set({
+        id: questionId,
+        title: title.trim(),
+        description: (description || "").trim(),
+        category: category || "その他",
+        authorId: employeeId,
+        authorName: `ユーザー${employeeId.substring(0, 4)}`,
+        createdAt: now,
+        updatedAt: now,
+        answerCount: 0,
+        viewCount: 0,
+        status: "active",
+        companyId,
+      });
+
+    logger.info(`質問投稿: ${questionId} (企業: ${companyId}, ユーザー: ${employeeId})`);
+
+    await db.collection("analytics_events").doc().set({
+      event: "question_posted",
+      companyId,
+      employeeId,
+      questionId,
+      timestamp: now,
+    });
+
+    return {
+      success: true,
+      questionId,
+      message: "質問を投稿しました",
+    };
+  } catch (error: any) {
+    logger.error(`質問投稿に失敗: ${error.message}`, error);
+    throw new HttpsError("internal", "質問投稿に失敗しました");
+  }
+});
+
+/// Q&Aフォーラム：回答投稿
+export const submitAnswer = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
+  const { companyId, questionId, content } = request.data as {
+    companyId?: string;
+    questionId?: string;
+    content?: string;
+  };
+
+  if (!companyId || !questionId || !content || content.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "必須項目が不足しています");
+  }
+
+  if (content.length > 2000) {
+    throw new HttpsError("invalid-argument", "回答は2000文字以下である必要があります");
+  }
+
+  try {
+    const answerId = db.collection("answers").doc().id;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("qaForum")
+      .doc(questionId)
+      .collection("answers")
+      .doc(answerId)
+      .set({
+        id: answerId,
+        content: content.trim(),
+        authorId: auth.uid,
+        authorName: `ユーザー${auth.uid.substring(0, 4)}`,
+        createdAt: now,
+        updatedAt: now,
+        likes: 0,
+        status: "active",
+      });
+
+    // 質問の回答数をインクリメント
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("qaForum")
+      .doc(questionId)
+      .update({
+        answerCount: admin.firestore.FieldValue.increment(1),
+        updatedAt: now,
+      });
+
+    logger.info(`回答投稿: ${answerId} (質問: ${questionId})`);
+
+    await db.collection("analytics_events").doc().set({
+      event: "answer_posted",
+      companyId,
+      questionId,
+      answerId,
+      timestamp: now,
+    });
+
+    return {
+      success: true,
+      answerId,
+      message: "回答を投稿しました",
+    };
+  } catch (error: any) {
+    logger.error(`回答投稿に失敗: ${error.message}`, error);
+    throw new HttpsError("internal", "回答投稿に失敗しました");
+  }
+});

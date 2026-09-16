@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../widgets/error_retry_view.dart';
 
 /// Q&A フォーラム質問詳細画面
@@ -63,42 +64,14 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final answerId = FirebaseFirestore.instance
-          .collection('companies')
-          .doc(widget.companyId)
-          .collection('qaForum')
-          .doc(widget.questionId)
-          .collection('answers')
-          .doc()
-          .id;
+      final functions = FirebaseFunctions.instance;
+      final callable = functions.httpsCallable('submitAnswer');
 
-      await FirebaseFirestore.instance
-          .collection('companies')
-          .doc(widget.companyId)
-          .collection('qaForum')
-          .doc(widget.questionId)
-          .collection('answers')
-          .doc(answerId)
-          .set({
-            'content': _answerController.text,
-            'authorId': 'temp-user-id',
-            'authorName': 'ユーザー',
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-            'likes': 0,
-            'status': 'active',
-          });
-
-      // 質問のanswerCountをインクリメント
-      await FirebaseFirestore.instance
-          .collection('companies')
-          .doc(widget.companyId)
-          .collection('qaForum')
-          .doc(widget.questionId)
-          .update({
-            'answerCount': FieldValue.increment(1),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+      await callable.call({
+        'companyId': widget.companyId,
+        'questionId': widget.questionId,
+        'content': _answerController.text,
+      });
 
       _answerController.clear();
       setState(() {
@@ -115,7 +88,7 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
       setState(() => _isSubmitting = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('エラー: $e')),
+          const SnackBar(content: Text('投稿に失敗しました')),
         );
       }
     }

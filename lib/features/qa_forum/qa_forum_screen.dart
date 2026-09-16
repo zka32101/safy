@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../providers/session_provider.dart';
 import '../../widgets/error_retry_view.dart';
 import 'question_detail_screen.dart';
@@ -388,6 +389,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
     final titleController = TextEditingController();
     final descriptionController = TextEditingController();
     String category = 'その他';
+    bool isSubmitting = false;
 
     showDialog(
       context: context,
@@ -400,6 +402,8 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
               children: [
                 TextField(
                   controller: titleController,
+                  enabled: !isSubmitting,
+                  maxLength: 200,
                   decoration: InputDecoration(
                     labelText: 'タイトル*',
                     hintText: '質問のタイトルを入力',
@@ -412,6 +416,8 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: descriptionController,
+                  enabled: !isSubmitting,
+                  maxLength: 1000,
                   decoration: InputDecoration(
                     labelText: '詳細',
                     hintText: '詳しく説明してください（オプション）',
@@ -424,9 +430,11 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   value: category,
-                  onChanged: (value) {
-                    setState(() => category = value ?? 'その他');
-                  },
+                  onChanged: isSubmitting
+                      ? null
+                      : (value) {
+                          setState(() => category = value ?? 'その他');
+                        },
                   decoration: InputDecoration(
                     labelText: 'カテゴリ',
                     border: OutlineInputBorder(
@@ -449,27 +457,36 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: isSubmitting ? null : () => Navigator.of(context).pop(),
               child: const Text('キャンセル'),
             ),
             ElevatedButton(
-              onPressed: () {
-                if (titleController.text.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('タイトルを入力してください')),
-                  );
-                  return;
-                }
-                _submitQuestion(
-                  context,
-                  sessionData.companyId,
-                  sessionData.userId,
-                  titleController.text,
-                  descriptionController.text,
-                  category,
-                );
-              },
-              child: const Text('投稿'),
+              onPressed: isSubmitting
+                  ? null
+                  : () {
+                      if (titleController.text.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('タイトルを入力してください')),
+                        );
+                        return;
+                      }
+                      _submitQuestion(
+                        context,
+                        sessionData.companyId,
+                        sessionData.userId,
+                        titleController.text,
+                        descriptionController.text,
+                        category,
+                        setState,
+                      );
+                    },
+              child: isSubmitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('投稿'),
             ),
           ],
         ),
@@ -484,37 +501,33 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
     String title,
     String description,
     String category,
+    StateSetter setState,
   ) async {
-    Navigator.of(context).pop();
+    setState(() {});
 
     try {
-      await FirebaseFirestore.instance
-          .collection('companies')
-          .doc(companyId)
-          .collection('qaForum')
-          .add({
-            'title': title,
-            'description': description,
-            'category': category,
-            'authorId': employeeId,
-            'authorName': 'ユーザー${employeeId.substring(0, 4)}',
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-            'answerCount': 0,
-            'viewCount': 0,
-            'status': 'active',
-            'companyId': companyId,
-          });
+      final functions = FirebaseFunctions.instance;
+      final callable = functions.httpsCallable('submitQuestion');
+
+      await callable.call({
+        'companyId': companyId,
+        'employeeId': employeeId,
+        'title': title,
+        'description': description,
+        'category': category,
+      });
 
       if (mounted) {
+        Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('質問を投稿しました')),
         );
+        setState(() {});
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('エラー: $e')),
+          SnackBar(content: Text('投稿に失敗しました')),
         );
       }
     }
