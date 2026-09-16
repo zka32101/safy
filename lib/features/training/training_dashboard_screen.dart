@@ -1,14 +1,56 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../data/models/module_model.dart';
 import '../../data/models/enrollment_model.dart';
+import '../../data/models/training_progress_model.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/session_provider.dart';
 import '../lesson/lesson_screen.dart';
 import '../../widgets/error_retry_view.dart';
 import '../../widgets/skeleton_loader.dart';
 import '../../widgets/empty_state_view.dart';
+
+// Firestore リアルタイムプロバイダー: 全 Tier 1 Training モジュールの進捗状況
+final trainingProgressProvider = StreamProvider.autoDispose<List<TrainingProgress>>((ref) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return Stream.value([]);
+
+  return FirebaseFirestore.instance
+      .collection('companies')
+      .doc(session.companyId)
+      .collection('trainingAttempts')
+      .where('employeeId', isEqualTo: session.uid)
+      .where('moduleId', whereIn: [
+        'tier1-platform-tech',
+        'tier1-operations',
+        'tier1-content-production',
+        'tier1-gtm-strategy',
+      ])
+      .orderBy('attemptedAt', descending: true)
+      .snapshots()
+      .map((snapshot) => snapshot.docs
+          .map((doc) => TrainingProgress.fromMap(doc.data()))
+          .toList());
+});
+
+// 修了証リアルタイムプロバイダー
+final trainingCertificateProvider = StreamProvider.autoDispose<TrainingCertificate?>((ref) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return Stream.value(null);
+
+  return FirebaseFirestore.instance
+      .collection('companies')
+      .doc(session.companyId)
+      .collection('trainingCertificates')
+      .where('employeeId', isEqualTo: session.uid)
+      .limit(1)
+      .snapshots()
+      .map((snapshot) => snapshot.docs.isNotEmpty
+          ? TrainingCertificate.fromMap(snapshot.docs.first.data())
+          : null);
+});
 
 /// Tier 1 Training Dashboard: Sep 16-22 自習期間の学習進捗管理画面
 class TrainingDashboardScreen extends ConsumerStatefulWidget {
@@ -80,31 +122,43 @@ class _TrainingDashboardScreenState
     String companyId,
     String employeeId,
   ) {
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          // Header with training period info
-          _buildTrainingHeader(context),
+    final progressAsync = ref.watch(trainingProgressProvider);
+    final certificateAsync = ref.watch(trainingCertificateProvider);
 
-          // Deadline countdown
-          _buildDeadlineWidget(context),
+    return progressAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, stack) => ErrorRetryView(
+        error: err.toString(),
+        onRetry: () => ref.refresh(trainingProgressProvider),
+      ),
+      data: (progressList) => SingleChildScrollView(
+        child: Column(
+          children: [
+            // Header with training period info
+            _buildTrainingHeader(context),
 
-          // Module progress cards
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '学習モジュール',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+            // Deadline countdown
+            _buildDeadlineWidget(context),
+
+            // Module progress cards with real-time data
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '学習モジュール',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                ..._buildModuleCards(
-                  context,
+                  const SizedBox(height: 16),
+                  ..._buildModuleCards(
+                    context,
+                    ref,
+                    progressList,
+                    certificateAsync,
                   ref,
                   companyId,
                   employeeId,
@@ -287,9 +341,15 @@ class _TrainingDashboardScreenState
   List<Widget> _buildModuleCards(
     BuildContext context,
     WidgetRef ref,
+    List<TrainingProgress> progressList,
+    AsyncValue<TrainingCertificate?> certificateAsync,
     String companyId,
     String employeeId,
   ) {
+    _getProgressForModule(String moduleId) {
+      return progressList.where((p) => p.moduleId == moduleId).firstOrNull;
+    }
+
     return [
       _ModuleProgressCard(
         moduleId: tierOneModuleIds[0],
@@ -300,6 +360,8 @@ class _TrainingDashboardScreenState
         companyId: companyId,
         employeeId: employeeId,
         ref: ref,
+        progress: _getProgressForModule(tierOneModuleIds[0]),
+        certificate: certificateAsync.valueOrNull,
       ),
       const SizedBox(height: 12),
       _ModuleProgressCard(
@@ -311,6 +373,8 @@ class _TrainingDashboardScreenState
         companyId: companyId,
         employeeId: employeeId,
         ref: ref,
+        progress: _getProgressForModule(tierOneModuleIds[1]),
+        certificate: certificateAsync.valueOrNull,
       ),
       const SizedBox(height: 12),
       _ModuleProgressCard(
@@ -322,6 +386,8 @@ class _TrainingDashboardScreenState
         companyId: companyId,
         employeeId: employeeId,
         ref: ref,
+        progress: _getProgressForModule(tierOneModuleIds[2]),
+        certificate: certificateAsync.valueOrNull,
       ),
       const SizedBox(height: 12),
       _ModuleProgressCard(
@@ -333,6 +399,8 @@ class _TrainingDashboardScreenState
         companyId: companyId,
         employeeId: employeeId,
         ref: ref,
+        progress: _getProgressForModule(tierOneModuleIds[3]),
+        certificate: certificateAsync.valueOrNull,
       ),
     ];
   }
@@ -416,6 +484,8 @@ class _ModuleProgressCard extends StatefulWidget {
   final String companyId;
   final String employeeId;
   final WidgetRef ref;
+  final TrainingProgress? progress;
+  final TrainingCertificate? certificate;
 
   const _ModuleProgressCard({
     required this.moduleId,
@@ -426,6 +496,8 @@ class _ModuleProgressCard extends StatefulWidget {
     required this.companyId,
     required this.employeeId,
     required this.ref,
+    this.progress,
+    this.certificate,
   });
 
   @override
@@ -437,9 +509,23 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Use real-time Firestore data if available
+    final progress = widget.progress;
+    if (progress != null) {
+      final completionPercent = 100; // Progress recorded = module complete
+      return _buildCard(
+        context,
+        completionPercent: completionPercent,
+        isPassed: progress.isPassed,
+        lessonCount: 4,
+        quizCount: 5,
+        score: progress.maxScore,
+      );
+    }
+
+    // Fallback: Fetch enrollment data for this module
     return Consumer(
       builder: (context, ref, child) {
-        // Fetch enrollment data for this module
         final enrollmentAsync = ref.watch(
           enrollmentServiceProvider.select(
             (service) => service.getEnrollment(
@@ -496,6 +582,7 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
     required bool isPassed,
     required int lessonCount,
     required int quizCount,
+    int? score,
   }) {
     return GestureDetector(
       onTap: () => _navigateToModule(context),
