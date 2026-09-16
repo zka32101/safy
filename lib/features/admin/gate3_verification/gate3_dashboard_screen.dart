@@ -1,9 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../../providers/service_providers.dart';
 import '../../../providers/session_provider.dart';
 import '../../../widgets/error_retry_view.dart';
 import '../../../widgets/skeleton_loader.dart';
+
+final gate3MetricsProvider = FutureProvider<Map<String, double>>((ref) async {
+  try {
+    final result = await FirebaseFunctions.instance.httpsCallable('getGate3Metrics').call();
+    return Map<String, double>.from(result.data ?? {});
+  } catch (e) {
+    return {
+      'completionRate': 0,
+      'platformTechRate': 0,
+      'operationsRate': 0,
+      'contentProductionRate': 0,
+      'gtmStrategyRate': 0,
+      'errorRate': 0,
+      'apiAvailability': 0,
+      'certificateVariance': 0,
+    };
+  }
+});
 
 /// GATE 3 Verification Dashboard
 /// Sep 23 に実行される本番環境昇格前の最終検証画面
@@ -57,6 +76,19 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
   }
 
   Widget _buildGate3Dashboard(BuildContext context, WidgetRef ref) {
+    final metricsAsync = ref.watch(gate3MetricsProvider);
+
+    return metricsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, stack) => ErrorRetryView(
+        error: err.toString(),
+        onRetry: () => ref.refresh(gate3MetricsProvider),
+      ),
+      data: (metrics) => _buildDashboardContent(context, ref, metrics),
+    );
+  }
+
+  Widget _buildDashboardContent(BuildContext context, WidgetRef ref, Map<String, double> metrics) {
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -81,7 +113,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: '全体修了率',
                   subtitle: '対象: 全42名 FTE',
                   threshold: COMPLETION_RATE_THRESHOLD,
-                  actual: 76.5, // Simulated value
+                  actual: metrics['completionRate'] ?? 0,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -89,7 +121,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'Platform技術モジュール',
                   subtitle: 'tier1-platform-tech',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: 81.0,
+                  actual: metrics['platformTechRate'] ?? 0,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -97,7 +129,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'Operations モジュール',
                   subtitle: 'tier1-operations',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: 78.5,
+                  actual: metrics['operationsRate'] ?? 0,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -105,7 +137,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'Content Production モジュール',
                   subtitle: 'tier1-content-production',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: 75.0,
+                  actual: metrics['contentProductionRate'] ?? 0,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -113,7 +145,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'GTM Strategy モジュール',
                   subtitle: 'tier1-gtm-strategy',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: 72.5,
+                  actual: metrics['gtmStrategyRate'] ?? 0,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -121,16 +153,16 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'エラーレート',
                   subtitle: 'Cloud Functions 全体',
                   threshold: ERROR_RATE_THRESHOLD,
-                  actual: 0.8,
+                  actual: metrics['errorRate'] ?? 0,
                   unit: '%',
-                  isInverse: true, // 低いほど良い
+                  isInverse: true,
                 ),
                 const SizedBox(height: 12),
                 _buildVerificationItem(
                   title: 'API 可用性',
                   subtitle: 'Sep 16-22 期間',
                   threshold: API_AVAILABILITY_THRESHOLD,
-                  actual: 99.8,
+                  actual: metrics['apiAvailability'] ?? 0,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -138,7 +170,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: '修了証発行数',
                   subtitle: '期待値との誤差',
                   threshold: CERTIFICATE_VARIANCE_THRESHOLD,
-                  actual: 2.3,
+                  actual: metrics['certificateVariance'] ?? 0,
                   unit: '%',
                   isVariance: true,
                 ),
@@ -147,7 +179,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
           ),
 
           // Summary & Recommendation
-          _buildSummary(context),
+          _buildSummary(context, metrics),
 
           // Action Buttons
           _buildActionButtons(context),
@@ -423,8 +455,19 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
     );
   }
 
-  Widget _buildSummary(BuildContext context) {
-    final allPassed = true; // 実装時は各検証項目の結果から判定
+  Widget _buildSummary(BuildContext context, Map<String, double> metrics) {
+    final completionPassed = (metrics['completionRate'] ?? 0) >= COMPLETION_RATE_THRESHOLD;
+    final platformTechPassed = (metrics['platformTechRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
+    final operationsPassed = (metrics['operationsRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
+    final contentProdPassed = (metrics['contentProductionRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
+    final gtmStrategyPassed = (metrics['gtmStrategyRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
+    final errorRatePassed = (metrics['errorRate'] ?? 100) < ERROR_RATE_THRESHOLD;
+    final apiAvailabilityPassed = (metrics['apiAvailability'] ?? 0) >= API_AVAILABILITY_THRESHOLD;
+    final certificateVariancePassed = (metrics['certificateVariance'] ?? 100) <= CERTIFICATE_VARIANCE_THRESHOLD;
+
+    final allPassed = completionPassed && platformTechPassed && operationsPassed &&
+                      contentProdPassed && gtmStrategyPassed && errorRatePassed &&
+                      apiAvailabilityPassed && certificateVariancePassed;
 
     return Container(
       margin: const EdgeInsets.all(16),

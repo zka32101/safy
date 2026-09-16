@@ -442,12 +442,10 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
         // Fetch enrollment data for this module
         final enrollmentAsync = ref.watch(
           enrollmentServiceProvider.select(
-            (service) => Future.value(
-              service.getEnrollment(
-                companyId: widget.companyId,
-                employeeId: widget.employeeId,
-                moduleId: widget.moduleId,
-              ),
+            (service) => service.getEnrollment(
+              companyId: widget.companyId,
+              employeeId: widget.employeeId,
+              moduleId: widget.moduleId,
             ),
           ),
         );
@@ -462,15 +460,16 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
             quizCount: 5,
           ),
           data: (enrollment) {
+            final lessonCount = enrollment?.totalLessons ?? 4;
             final completionPercent = enrollment != null
-                ? ((enrollment.lessonsCompleted / 4) * 100).toInt()
+                ? ((enrollment.lessonsCompleted / lessonCount) * 100).toInt()
                 : 0;
             final isPassed = enrollment?.isPassed ?? false;
             return _buildCard(
               context,
               completionPercent: completionPercent,
               isPassed: isPassed,
-              lessonCount: 4,
+              lessonCount: lessonCount,
               quizCount: 5,
             );
           },

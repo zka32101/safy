@@ -36,16 +36,16 @@ class TrainingProgress {
       maxScore: (map['maxScore'] as num?)?.toInt() ?? 0,
       isPassed: map['isPassed'] as bool? ?? false,
       completedAt: map['completedAt'] != null
-          ? DateTime.parse(map['completedAt'] as String)
+          ? _parseDateTime(map['completedAt'])
           : null,
       certificateIssuedAt: map['certificateIssuedAt'] != null
-          ? DateTime.parse(map['certificateIssuedAt'] as String)
+          ? _parseDateTime(map['certificateIssuedAt'])
           : null,
       createdAt: map['createdAt'] != null
-          ? DateTime.parse(map['createdAt'] as String)
+          ? _parseDateTime(map['createdAt'])
           : DateTime.now(),
       updatedAt: map['updatedAt'] != null
-          ? DateTime.parse(map['updatedAt'] as String)
+          ? _parseDateTime(map['updatedAt'])
           : DateTime.now(),
     );
   }
@@ -63,6 +63,17 @@ class TrainingProgress {
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
       };
+
+  static DateTime _parseDateTime(dynamic value) {
+    if (value is String) {
+      return DateTime.parse(value);
+    } else if (value is DateTime) {
+      return value;
+    } else if (value.runtimeType.toString().contains('Timestamp')) {
+      return (value as dynamic).toDate();
+    }
+    return DateTime.now();
+  }
 
   TrainingProgress copyWith({
     String? employeeId,
