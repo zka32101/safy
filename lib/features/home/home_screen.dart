@@ -18,6 +18,7 @@ import '../certificates/my_certificates_screen.dart';
 import '../admin/team_management/team_management_screen.dart';
 import '../paywall/paywall_screen.dart';
 import '../training/training_dashboard_screen.dart';
+import '../exam/exam_enrollment_screen.dart';
 import '../../widgets/error_retry_view.dart';
 import '../../widgets/skeleton_loader.dart';
 import '../../widgets/empty_state_view.dart';
@@ -218,6 +219,67 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 Icon(
                                   Icons.chevron_right,
                                   color: Colors.indigo[700],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // ライブ認定試験セクション（Oct 10-20 実施）
+                      Card(
+                        color: Colors.purple.withOpacity(0.1),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const ExamEnrollmentScreen(),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.assignment,
+                                  color: Colors.purple[700],
+                                  size: 24,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'ライブ認定試験',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.purple[700],
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      const Text(
+                                        'Oct 10-20 実施',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Tier 2/3 試験に挑戦',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.chevron_right,
+                                  color: Colors.purple[700],
                                 ),
                               ],
                             ),
