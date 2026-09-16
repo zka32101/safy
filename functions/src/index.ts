@@ -510,3 +510,83 @@ export const generateOriginalContent = onCall(
     return parsed;
   }
 );
+
+/// レベル診断の完了・学習パス推奨
+export const completeLevelDiagnostic = onCall(async (request) => {
+  const {
+    companyId,
+    employeeId,
+    answers,
+    totalScore,
+    averageScore,
+    recommendedLevel,
+  } = request.data;
+
+  try {
+    if (!companyId || !employeeId || !recommendedLevel) {
+      throw new HttpsError(
+        "invalid-argument",
+        "必須項目が不足しています"
+      );
+    }
+
+    const diagnosticId = db.collection("diagnostics").doc().id;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // 診断結果を保存
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("employeeDiagnostics")
+      .doc(diagnosticId)
+      .set({
+        id: diagnosticId,
+        employeeId,
+        answers: answers || {},
+        totalScore: totalScore || 0,
+        averageScore: averageScore || 0,
+        recommendedLevel,
+        completedAt: now,
+        createdAt: now,
+      });
+
+    // 従業員のスキルレベルを更新
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("employees")
+      .doc(employeeId)
+      .update({
+        skillLevel: recommendedLevel,
+        lastDiagnosticAt: now,
+        updatedAt: now,
+      });
+
+    logger.info(
+      `レベル診断完了: ${diagnosticId} (従業員: ${employeeId}, レベル: ${recommendedLevel})`
+    );
+
+    // 分析イベント記録
+    await db.collection("analytics_events").doc().set({
+      event: "diagnostic_completed",
+      companyId,
+      employeeId,
+      recommendedLevel,
+      averageScore,
+      timestamp: now,
+    });
+
+    return {
+      success: true,
+      diagnosticId,
+      recommendedLevel,
+      message: "スキルレベル診断が完了しました",
+    };
+  } catch (error: any) {
+    logger.error(`レベル診断に失敗: ${error.message}`, error);
+    throw new HttpsError(
+      "internal",
+      `レベル診断に失敗しました: ${error.message}`
+    );
+  }
+});
