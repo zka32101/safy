@@ -4,7 +4,7 @@ import '../../data/models/company_model.dart';
 import '../../providers/industry_provider.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/session_provider.dart';
-import '../home/home_screen.dart';
+import '../dashboard/app_shell.dart';
 
 /// 個人登録者向けの業種選択画面(チーム参加者は会社側で選択済みのためスキップ)
 class IndustrySelectionScreen extends ConsumerStatefulWidget {
@@ -56,7 +56,7 @@ class _IndustrySelectionScreenState
       if (!mounted) return;
       // InviteEntryScreenまで含めて戻れないようにする(戻ると別アカウントで再登録できてしまうため)。
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => const AppShell()),
         (route) => false,
       );
     } catch (_) {
