@@ -808,3 +808,73 @@ export const checkTrainingDeadline = onSchedule("every day 23:00", async (contex
     logger.error(`Tier 1 Training 期限切れチェックに失敗: ${error.message}`, error);
   }
 });
+
+// ─────────────────────────────────────────────
+// seedTier1ModulesOnSchedule: Sep 16 09:00 JST に Tier 1 Training モジュールを
+// Firestore に自動登録する定期実行関数
+// (デプロイ後、Sep 16 朝に自動実行して、学習期間開始前にモジュールが利用可能な状態にする)
+// ─────────────────────────────────────────────
+const TIER1_MODULES_DATA = [
+  {
+    id: "tier1-platform-tech",
+    title: "Platform技術概要",
+    description: "Firebase ecosystem、Cloud Functions、Firestore、本番環境構築の基礎知識",
+    passThresholdDefault: 80,
+    category: "engineering",
+  },
+  {
+    id: "tier1-operations",
+    title: "Operations・監視体制",
+    description: "監視・アラート設定、性能最適化、エラーハンドリング、24/7 サポート体制構築",
+    passThresholdDefault: 80,
+    category: "operations",
+  },
+  {
+    id: "tier1-content-production",
+    title: "Content Production・配信戦略",
+    description: "エンタープライズ研修コンテンツの企画・制作・配信フロー、クオリティ管理、ローカライズ戦略",
+    passThresholdDefault: 80,
+    category: "operations",
+  },
+  {
+    id: "tier1-gtm-strategy",
+    title: "GTM Strategy・営業展開",
+    description: "Go-To-Market 戦略、顧客獲得・セグメンテーション、営業サイクル管理、成功メトリクス",
+    passThresholdDefault: 80,
+    category: "business",
+  },
+];
+
+export const seedTier1ModulesOnSchedule = onSchedule("2026-09-16 00:00:00 Asia/Tokyo", async (context) => {
+  try {
+    logger.info("Tier 1 Training モジュールの自動シード開始");
+
+    for (const moduleData of TIER1_MODULES_DATA) {
+      const moduleDocRef = db.doc(`modules/${moduleData.id}`);
+
+      // 既に登録されているかチェック
+      const existing = await moduleDocRef.get();
+      if (existing.exists) {
+        logger.info(`${moduleData.id} は既に登録されています`);
+        continue;
+      }
+
+      await moduleDocRef.set({
+        title: moduleData.title,
+        description: moduleData.description,
+        passThresholdDefault: moduleData.passThresholdDefault,
+        categoryId: moduleData.category,
+        isFreeTrial: false,
+        sortOrder: TIER1_MODULES_DATA.indexOf(moduleData),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      logger.info(`Tier 1 Training モジュール登録完了: ${moduleData.id}`);
+    }
+
+    logger.info("✅ Tier 1 Training モジュールの自動シード完了");
+  } catch (error: any) {
+    logger.error(`Tier 1 Training モジュール自動シードに失敗: ${error.message}`, error);
+  }
+});
