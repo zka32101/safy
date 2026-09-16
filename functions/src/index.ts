@@ -1089,3 +1089,111 @@ function _analyzeSentiment(text: string): string {
   if (negativeCount > positiveCount) return "negative";
   return "neutral";
 }
+
+/// ライブ認定試験の提出と採点
+export const submitLiveExam = onCall(async (request) => {
+  const {
+    companyId,
+    employeeId,
+    examId,
+    answers,
+    timeSpentSeconds,
+    autoSubmit,
+  } = request.data;
+
+  try {
+    if (!companyId || !employeeId || !examId || !answers) {
+      throw new HttpsError(
+        "invalid-argument",
+        "必須項目が不足しています"
+      );
+    }
+
+    // 試験問題を取得
+    const questionsSnapshot = await db
+      .collection("exams")
+      .doc(examId)
+      .collection("questions")
+      .orderBy("order")
+      .get();
+
+    if (questionsSnapshot.empty) {
+      throw new HttpsError(
+        "not-found",
+        "試験問題が見つかりません"
+      );
+    }
+
+    const questions = questionsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    // 採点
+    let correctCount = 0;
+    for (let i = 0; i < questions.length; i++) {
+      const question = questions[i];
+      const userAnswerKey = `option_${question.correctOption}a`;
+      const userAnswer = answers[i];
+
+      if (userAnswer === userAnswerKey) {
+        correctCount++;
+      }
+    }
+
+    const score = Math.round((correctCount / questions.length) * 100);
+    const passed = score >= 70; // 合格ライン 70%
+
+    const examAttemptId = db.collection("exams").doc().id;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // 試験結果を保存
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("examAttempts")
+      .doc(examAttemptId)
+      .set({
+        id: examAttemptId,
+        employeeId,
+        examId,
+        score,
+        passed,
+        correctCount,
+        totalQuestions: questions.length,
+        timeSpentSeconds,
+        autoSubmit,
+        submittedAt: now,
+        createdAt: now,
+      });
+
+    logger.info(
+      `試験提出完了: ${examAttemptId} (${examId}, スコア: ${score}%, 合格: ${passed})`
+    );
+
+    // 分析イベント記録
+    await db.collection("analytics_events").doc().set({
+      event: "exam_submitted",
+      companyId,
+      employeeId,
+      examId,
+      score,
+      passed,
+      timestamp: now,
+    });
+
+    return {
+      success: true,
+      examAttemptId,
+      score,
+      passed,
+      message: passed ? "合格おめでとうございます！" : "残念ながら不合格です。再受験してください。",
+    };
+  } catch (error: any) {
+    logger.error(`試験提出に失敗: ${error.message}`, error);
+    throw new HttpsError(
+      "internal",
+      `試験提出に失敗しました: ${error.message}`
+    );
+  }
+});

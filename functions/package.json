@@ -6,7 +6,8 @@
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "seed:tier1": "ts-node src/seed-tier1-modules.ts"
+    "seed:tier1": "ts-node src/seed-tier1-modules.ts",
+    "seed:exams": "ts-node src/seed-exams.ts"
   },
   "engines": {
     "node": "20"
