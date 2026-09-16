@@ -5,7 +5,8 @@
     "build": "tsc",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "seed:tier1": "ts-node src/seed-tier1-modules.ts"
   },
   "engines": {
     "node": "20"
@@ -19,6 +20,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
   },
   "private": true

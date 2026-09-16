@@ -570,3 +570,311 @@ export const generateOriginalContent = onCall(
     throw new HttpsError("internal", "AIコンテンツ生成に失敗しました。もう一度お試しください");
   }
 );
+
+// ─────────────────────────────────────────────
+// recordTrainingProgress: Tier 1 Training の進捗記録
+// クイズ採点後、学習進捗を trainingAttempts コレクションに記録
+// moduleId が tier1-* で始まる場合のみ実行
+// ─────────────────────────────────────────────
+export const recordTrainingProgress = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
+  const { companyId, employeeId, moduleId, score, passed } = request.data as {
+    companyId?: string;
+    employeeId?: string;
+    moduleId?: string;
+    score?: number;
+    passed?: boolean;
+  };
+
+  if (!companyId || !employeeId || !moduleId || score === undefined || passed === undefined) {
+    throw new HttpsError("invalid-argument", "companyId/employeeId/moduleId/score/passedが必要です");
+  }
+
+  // Tier 1 Training モジュールのみ処理
+  if (!moduleId.startsWith("tier1-")) {
+    throw new HttpsError("invalid-argument", "この関数は Tier 1 Training モジュール向けです");
+  }
+
+  if (auth.uid !== employeeId) {
+    throw new HttpsError("permission-denied", "本人以外の進捗は記録できません");
+  }
+
+  try {
+    // trainingAttempts コレクションに記録（ルート: companies/{companyId}/trainingAttempts）
+    const trainingRef = db.collection(`companies/${companyId}/trainingAttempts`).doc();
+    await trainingRef.set({
+      employeeId,
+      moduleId,
+      score,
+      passed,
+      attemptedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    logger.info(
+      `Tier 1 Training 進捗記録: companyId=${companyId}, employeeId=${employeeId}, moduleId=${moduleId}, score=${score}, passed=${passed}`
+    );
+
+    // 全 4 モジュール完了かつ全て 80% 以上かチェック
+    const tierOneModuleIds = [
+      "tier1-platform-tech",
+      "tier1-operations",
+      "tier1-content-production",
+      "tier1-gtm-strategy",
+    ];
+
+    const completedModules = await Promise.all(
+      tierOneModuleIds.map(async (mid) => {
+        const latestAttempt = await db
+          .collection(`companies/${companyId}/trainingAttempts`)
+          .where("employeeId", "==", employeeId)
+          .where("moduleId", "==", mid)
+          .orderBy("attemptedAt", "desc")
+          .limit(1)
+          .get();
+
+        return {
+          moduleId: mid,
+          passed: latestAttempt.docs.length > 0 ? latestAttempt.docs[0].data().passed : false,
+        };
+      })
+    );
+
+    const allPassed = completedModules.every((m) => m.passed);
+    if (allPassed && completedModules.every((m) => m.moduleId)) {
+      // 4 つ全て修了 → 修了証発行
+      await issueTrainingCertificate(companyId, employeeId, tierOneModuleIds);
+    }
+
+    return {
+      success: true,
+      trainingAttemptId: trainingRef.id,
+      certificateEligible: allPassed,
+    };
+  } catch (error: any) {
+    logger.error(`Tier 1 Training 進捗記録に失敗: ${error.message}`, error);
+    throw new HttpsError("internal", "進捗記録に失敗しました");
+  }
+});
+
+// ─────────────────────────────────────────────
+// issueTrainingCertificate: Tier 1 Training 修了証の発行
+// 4 つのモジュールすべてを 80% 以上で合格した場合に呼ばれる
+// ─────────────────────────────────────────────
+async function issueTrainingCertificate(
+  companyId: string,
+  employeeId: string,
+  completedModuleIds: string[]
+): Promise<void> {
+  try {
+    // 既に発行済みか確認（重複発行防止）
+    const existingCerts = await db
+      .collection(`companies/${companyId}/trainingCertificates`)
+      .where("employeeId", "==", employeeId)
+      .limit(1)
+      .get();
+
+    if (!existingCerts.empty) {
+      logger.info(`Tier 1 Training 修了証は既に発行済み: ${employeeId}`);
+      return;
+    }
+
+    const now = new Date();
+    const validUntil = new Date(now.getTime() + 365 * DAY_MS); // 1 年有効
+
+    // 証書番号の生成: CERT-20260916-XXXXXX (日付 + 6 桁ランダム)
+    const jstNow = new Date(now.getTime() + JST_OFFSET_MS);
+    const dateStr = jstNow.toISOString().split("T")[0].replace(/-/g, "");
+    const randomSuffix = Math.floor(Math.random() * 1000000)
+      .toString()
+      .padStart(6, "0");
+    const certificateNumber = `CERT-${dateStr}-${randomSuffix}`;
+
+    const certRef = db.collection(`companies/${companyId}/trainingCertificates`).doc();
+    await certRef.set({
+      employeeId,
+      companyId,
+      completedModuleIds,
+      certificateNumber,
+      issuedAt: admin.firestore.FieldValue.serverTimestamp(),
+      validUntil: admin.firestore.Timestamp.fromDate(validUntil),
+    });
+
+    logger.info(
+      `Tier 1 Training 修了証を発行しました: employeeId=${employeeId}, certificateNumber=${certificateNumber}`
+    );
+
+    // プッシュ通知を送信（修了証発行の通知）
+    const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+    const employee = employeeSnap.data() as EmployeeDoc | undefined;
+    if (employee?.fcmToken) {
+      try {
+        await messaging.send({
+          token: employee.fcmToken,
+          notification: {
+            title: "Tier 1 Training 修了",
+            body: `すべてのモジュールが完了しました。修了証が発行されました (${certificateNumber})`,
+          },
+        });
+      } catch (notificationError) {
+        logger.warn(`プッシュ通知送信に失敗しました: ${notificationError}`);
+      }
+    }
+  } catch (error: any) {
+    logger.error(`Tier 1 Training 修了証発行に失敗: ${error.message}`, error);
+    throw error;
+  }
+}
+
+// ─────────────────────────────────────────────
+// checkTrainingDeadline: Tier 1 Training 期限切れチェック
+// 毎日 23:00 JST に実行（期限: Sep 22 23:59 JST）
+// ─────────────────────────────────────────────
+export const checkTrainingDeadline = onSchedule("every day 23:00", async (context) => {
+  const trainingDeadline = new Date("2026-09-22T23:59:59+0900"); // Sep 22 23:59 JST
+  const now = new Date();
+
+  // 期限を 24 時間以上過ぎている場合のみ実行
+  if (now.getTime() - trainingDeadline.getTime() < 24 * 60 * 60 * 1000) {
+    logger.info("Tier 1 Training 期限に到達していません");
+    return;
+  }
+
+  try {
+    // 全企業の全従業員について、Tier 1 Training 未完了者を特定
+    const companiesSnap = await db.collection("companies").get();
+
+    for (const companySnap of companiesSnap.docs) {
+      const companyId = companySnap.id;
+
+      const employeesSnap = await db.collection(`companies/${companyId}/employees`).get();
+
+      for (const employeeSnap of employeesSnap.docs) {
+        const employeeId = employeeSnap.id;
+
+        // この従業員について、4 つの Tier 1 モジュール全ての最新スコアを確認
+        const tierOneModuleIds = [
+          "tier1-platform-tech",
+          "tier1-operations",
+          "tier1-content-production",
+          "tier1-gtm-strategy",
+        ];
+
+        const moduleResults = await Promise.all(
+          tierOneModuleIds.map(async (moduleId) => {
+            const latestAttempt = await db
+              .collection(`companies/${companyId}/trainingAttempts`)
+              .where("employeeId", "==", employeeId)
+              .where("moduleId", "==", moduleId)
+              .orderBy("attemptedAt", "desc")
+              .limit(1)
+              .get();
+
+            return {
+              moduleId,
+              passed: latestAttempt.docs.length > 0 ? latestAttempt.docs[0].data().passed : false,
+            };
+          })
+        );
+
+        const incompleteModules = moduleResults.filter((m) => !m.passed).map((m) => m.moduleId);
+
+        if (incompleteModules.length > 0) {
+          // 未完了モジュールがある → trainingStatus に記録
+          const statusRef = db
+            .collection(`companies/${companyId}/trainingDeadlineStatus`)
+            .doc(employeeId);
+
+          await statusRef.set({
+            employeeId,
+            companyId,
+            deadlineExceeded: true,
+            incompleteModules,
+            incompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+
+          logger.warn(
+            `Tier 1 Training 期限超過: companyId=${companyId}, employeeId=${employeeId}, incompleteModules=${incompleteModules.join(",")} `
+          );
+        }
+      }
+    }
+
+    logger.info("Tier 1 Training 期限切れチェック完了");
+  } catch (error: any) {
+    logger.error(`Tier 1 Training 期限切れチェックに失敗: ${error.message}`, error);
+  }
+});
+
+// ─────────────────────────────────────────────
+// seedTier1ModulesOnSchedule: Sep 16 09:00 JST に Tier 1 Training モジュールを
+// Firestore に自動登録する定期実行関数
+// (デプロイ後、Sep 16 朝に自動実行して、学習期間開始前にモジュールが利用可能な状態にする)
+// ─────────────────────────────────────────────
+const TIER1_MODULES_DATA = [
+  {
+    id: "tier1-platform-tech",
+    title: "Platform技術概要",
+    description: "Firebase ecosystem、Cloud Functions、Firestore、本番環境構築の基礎知識",
+    passThresholdDefault: 80,
+    category: "engineering",
+  },
+  {
+    id: "tier1-operations",
+    title: "Operations・監視体制",
+    description: "監視・アラート設定、性能最適化、エラーハンドリング、24/7 サポート体制構築",
+    passThresholdDefault: 80,
+    category: "operations",
+  },
+  {
+    id: "tier1-content-production",
+    title: "Content Production・配信戦略",
+    description: "エンタープライズ研修コンテンツの企画・制作・配信フロー、クオリティ管理、ローカライズ戦略",
+    passThresholdDefault: 80,
+    category: "operations",
+  },
+  {
+    id: "tier1-gtm-strategy",
+    title: "GTM Strategy・営業展開",
+    description: "Go-To-Market 戦略、顧客獲得・セグメンテーション、営業サイクル管理、成功メトリクス",
+    passThresholdDefault: 80,
+    category: "business",
+  },
+];
+
+export const seedTier1ModulesOnSchedule = onSchedule("2026-09-16 00:00:00 Asia/Tokyo", async (context) => {
+  try {
+    logger.info("Tier 1 Training モジュールの自動シード開始");
+
+    for (const moduleData of TIER1_MODULES_DATA) {
+      const moduleDocRef = db.doc(`modules/${moduleData.id}`);
+
+      // 既に登録されているかチェック
+      const existing = await moduleDocRef.get();
+      if (existing.exists) {
+        logger.info(`${moduleData.id} は既に登録されています`);
+        continue;
+      }
+
+      await moduleDocRef.set({
+        title: moduleData.title,
+        description: moduleData.description,
+        passThresholdDefault: moduleData.passThresholdDefault,
+        categoryId: moduleData.category,
+        isFreeTrial: false,
+        sortOrder: TIER1_MODULES_DATA.indexOf(moduleData),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      logger.info(`Tier 1 Training モジュール登録完了: ${moduleData.id}`);
+    }
+
+    logger.info("✅ Tier 1 Training モジュールの自動シード完了");
+  } catch (error: any) {
+    logger.error(`Tier 1 Training モジュール自動シードに失敗: ${error.message}`, error);
+  }
+});
