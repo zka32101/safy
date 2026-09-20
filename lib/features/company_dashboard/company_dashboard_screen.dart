@@ -25,22 +25,13 @@ class _CompanyDashboardScreenState
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
 
-    return session.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, stack) => ErrorRetryView(
-        error: err.toString(),
-        onRetry: () => ref.refresh(sessionProvider),
-      ),
-      data: (sessionData) {
-        if (sessionData == null || !sessionData.isAdmin) {
-          return const Center(
-            child: Text('管理者権限が必要です'),
-          );
-        }
+    if (!session.isSignedIn || !session.isAdmin) {
+      return const Center(
+        child: Text('管理者権限が必要です'),
+      );
+    }
 
-        return _buildDashboard(context, sessionData.companyId);
-      },
-    );
+    return _buildDashboard(context, session.employee!.companyId);
   }
 
   Widget _buildDashboard(BuildContext context, String companyId) {

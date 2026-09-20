@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../providers/session_provider.dart';
+import '../../providers/firebase_providers.dart';
 import '../../widgets/error_retry_view.dart';
 
 /// 学習パスレコメンデーション画面：診断結果に基づく個別学習計画
@@ -23,37 +23,22 @@ class _LearningPathScreenState extends ConsumerState<LearningPathScreen> {
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
 
-    return session.when(
-      loading: () => Scaffold(
+    if (!session.isSignedIn) {
+      return Scaffold(
         appBar: AppBar(title: const Text('学習パス')),
-        body: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (err, stack) => Scaffold(
-        appBar: AppBar(title: const Text('学習パス')),
-        body: ErrorRetryView(
-          error: err.toString(),
-          onRetry: () => ref.refresh(sessionProvider),
-        ),
-      ),
-      data: (sessionData) {
-        if (sessionData == null) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('学習パス')),
-            body: const Center(child: Text('ログインが必要です')),
-          );
-        }
+        body: const Center(child: Text('ログインが必要です')),
+      );
+    }
 
-        return _LearningPathContent(
-          companyId: sessionData.companyId,
-          employeeId: sessionData.userId,
-          userLevel: widget.userLevel,
-        );
-      },
+    return _LearningPathContent(
+      companyId: session.employee!.companyId,
+      employeeId: session.employee!.id,
+      userLevel: widget.userLevel,
     );
   }
 }
 
-class _LearningPathContent extends StatefulWidget {
+class _LearningPathContent extends ConsumerStatefulWidget {
   final String companyId;
   final String employeeId;
   final String? userLevel;
@@ -65,10 +50,10 @@ class _LearningPathContent extends StatefulWidget {
   });
 
   @override
-  State<_LearningPathContent> createState() => _LearningPathContentState();
+  ConsumerState<_LearningPathContent> createState() => _LearningPathContentState();
 }
 
-class _LearningPathContentState extends State<_LearningPathContent> {
+class _LearningPathContentState extends ConsumerState<_LearningPathContent> {
   late Future<Map<String, dynamic>> _learningPathFuture;
 
   @override
@@ -81,9 +66,10 @@ class _LearningPathContentState extends State<_LearningPathContent> {
     try {
       // ユーザーレベルの取得（診断を未実施の場合はデフォルト）
       String userLevel = widget.userLevel ?? 'intermediate';
+      final firestore = ref.read(firestoreProvider);
 
       // Firestore から該当レベルの推奨学習パスを取得
-      final pathSnapshot = await FirebaseFirestore.instance
+      final pathSnapshot = await firestore
           .collection('learningPaths')
           .doc(userLevel)
           .get();
@@ -104,7 +90,7 @@ class _LearningPathContentState extends State<_LearningPathContent> {
 
       final modules = <Map<String, dynamic>>[];
       for (final moduleId in recommendedModuleIds) {
-        final moduleSnap = await FirebaseFirestore.instance
+        final moduleSnap = await firestore
             .collection('modules')
             .doc(moduleId)
             .get();
@@ -150,7 +136,7 @@ class _LearningPathContentState extends State<_LearningPathContent> {
 
           if (snapshot.hasError) {
             return ErrorRetryView(
-              error: snapshot.error.toString(),
+              message: snapshot.error.toString(),
               onRetry: () => setState(() {
                 _learningPathFuture = _loadLearningPath();
               }),
@@ -268,7 +254,7 @@ class _LearningPathContentState extends State<_LearningPathContent> {
                 color: Colors.white70,
               ),
             ),
-          if ((pathData['estimatedHours'] as int?) ?? 0 > 0) ...[
+          if (((pathData['estimatedHours'] as int?) ?? 0) > 0) ...[
             const SizedBox(height: 8),
             Text(
               '推定学習時間：${pathData['estimatedHours']}時間',

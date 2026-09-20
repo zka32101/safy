@@ -1,28 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
-import '../../data/models/module_model.dart';
-import '../../data/models/enrollment_model.dart';
 import '../../data/models/training_progress_model.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/session_provider.dart';
 import '../lesson/lesson_screen.dart';
 import '../../widgets/error_retry_view.dart';
-import '../../widgets/skeleton_loader.dart';
 import '../../widgets/empty_state_view.dart';
 import 'user_feedback_screen.dart';
 
 // Firestore リアルタイムプロバイダー: 全 Tier 1 Training モジュールの進捗状況
 final trainingProgressProvider = StreamProvider.autoDispose<List<TrainingProgress>>((ref) {
-  final session = ref.watch(sessionProvider).valueOrNull;
-  if (session == null) return Stream.value([]);
+  final session = ref.watch(sessionProvider);
+  if (!session.isSignedIn) return Stream.value([]);
+  final employee = session.employee!;
 
   return FirebaseFirestore.instance
       .collection('companies')
-      .doc(session.companyId)
+      .doc(employee.companyId)
       .collection('trainingAttempts')
-      .where('employeeId', isEqualTo: session.uid)
+      .where('employeeId', isEqualTo: employee.id)
       .where('moduleId', whereIn: [
         'tier1-platform-tech',
         'tier1-operations',
@@ -38,18 +35,20 @@ final trainingProgressProvider = StreamProvider.autoDispose<List<TrainingProgres
 
 // 修了証リアルタイムプロバイダー
 final trainingCertificateProvider = StreamProvider.autoDispose<TrainingCertificate?>((ref) {
-  final session = ref.watch(sessionProvider).valueOrNull;
-  if (session == null) return Stream.value(null);
+  final session = ref.watch(sessionProvider);
+  if (!session.isSignedIn) return Stream.value(null);
+  final employee = session.employee!;
 
   return FirebaseFirestore.instance
       .collection('companies')
-      .doc(session.companyId)
+      .doc(employee.companyId)
       .collection('trainingCertificates')
-      .where('employeeId', isEqualTo: session.uid)
+      .where('employeeId', isEqualTo: employee.id)
       .limit(1)
       .snapshots()
       .map((snapshot) => snapshot.docs.isNotEmpty
-          ? TrainingCertificate.fromMap(snapshot.docs.first.data())
+          ? TrainingCertificate.fromMap(
+              snapshot.docs.first.id, snapshot.docs.first.data())
           : null);
 });
 
@@ -87,30 +86,20 @@ class _TrainingDashboardScreenState
       ),
       body: Consumer(
         builder: (context, ref, child) {
-          final sessionAsync = ref.watch(sessionProvider);
+          final session = ref.watch(sessionProvider);
 
-          return sessionAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (err, stack) => ErrorRetryView(
-              error: err.toString(),
-              onRetry: () => ref.refresh(sessionProvider),
-            ),
-            data: (session) {
-              if (session == null) {
-                return const EmptyStateView(
-                  icon: Icons.info,
-                  title: 'ログインが必要です',
-                  description: 'ホーム画面からログインしてください',
-                );
-              }
+          if (!session.isSignedIn) {
+            return const EmptyStateView(
+              imagePath: 'assets/images/empty_states/empty_state_no_modules.png',
+              message: 'ログインが必要です。ホーム画面からログインしてください',
+            );
+          }
 
-              return _buildTrainingDashboard(
-                context,
-                ref,
-                session.companyId,
-                session.employeeId,
-              );
-            },
+          return _buildTrainingDashboard(
+            context,
+            ref,
+            session.employee!.companyId,
+            session.employee!.id,
           );
         },
       ),
@@ -129,7 +118,7 @@ class _TrainingDashboardScreenState
     return progressAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (err, stack) => ErrorRetryView(
-        error: err.toString(),
+        message: err.toString(),
         onRetry: () => ref.refresh(trainingProgressProvider),
       ),
       data: (progressList) => SingleChildScrollView(
@@ -160,17 +149,17 @@ class _TrainingDashboardScreenState
                     ref,
                     progressList,
                     certificateAsync,
-                  ref,
-                  companyId,
-                  employeeId,
-                ),
-              ],
+                    companyId,
+                    employeeId,
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          // Footer info
-          _buildFooterInfo(context),
-        ],
+            // Footer info
+            _buildFooterInfo(context),
+          ],
+        ),
       ),
     );
   }
@@ -406,6 +395,20 @@ class _TrainingDashboardScreenState
     ];
   }
 
+  Widget _buildConditionItem(String icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(icon, style: const TextStyle(color: Colors.green)),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFooterInfo(BuildContext context) {
     return Container(
       width: double.infinity,
@@ -469,17 +472,14 @@ class _TrainingDashboardScreenState
     _isNavigating = true;
 
     try {
-      final moduleService = ref.read(moduleServiceProvider);
-      final module = await moduleService.getModule(moduleId);
+      final contentService = ref.read(contentServiceProvider);
+      final module = await contentService.getModule(moduleId);
 
       if (!mounted) return;
 
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => LessonScreen(
-            module: module,
-            companyId: companyId,
-          ),
+          builder: (_) => LessonScreen(module: module!),
         ),
       );
     } catch (e) {
@@ -532,10 +532,9 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
     // Use real-time Firestore data if available
     final progress = widget.progress;
     if (progress != null) {
-      final completionPercent = 100; // Progress recorded = module complete
       return _buildCard(
         context,
-        completionPercent: completionPercent,
+        completionPercent: 100, // Progress recorded = module complete
         isPassed: progress.isPassed,
         lessonCount: 4,
         quizCount: 5,
@@ -543,58 +542,16 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
       );
     }
 
-    // Fallback: Fetch enrollment data for this module
-    return Consumer(
-      builder: (context, ref, child) {
-        final enrollmentAsync = ref.watch(
-          enrollmentServiceProvider.select(
-            (service) => service.getEnrollment(
-              companyId: widget.companyId,
-              employeeId: widget.employeeId,
-              moduleId: widget.moduleId,
-            ),
-          ),
-        );
-
-        return enrollmentAsync.when(
-          loading: () => _buildSkeletonCard(),
-          error: (err, stack) => _buildCard(
-            context,
-            completionPercent: 0,
-            isPassed: false,
-            lessonCount: 4,
-            quizCount: 5,
-          ),
-          data: (enrollment) {
-            final lessonCount = enrollment?.totalLessons ?? 4;
-            final completionPercent = enrollment != null
-                ? ((enrollment.lessonsCompleted / lessonCount) * 100).toInt()
-                : 0;
-            final isPassed = enrollment?.isPassed ?? false;
-            return _buildCard(
-              context,
-              completionPercent: completionPercent,
-              isPassed: isPassed,
-              lessonCount: lessonCount,
-              quizCount: 5,
-            );
-          },
-        );
-      },
+    // Fallback: no progress attempt recorded yet for this module
+    return _buildCard(
+      context,
+      completionPercent: 0,
+      isPassed: false,
+      lessonCount: 4,
+      quizCount: 5,
     );
   }
 
-  Widget _buildSkeletonCard() {
-    return SkeletonLoader(
-      child: Container(
-        height: 160,
-        decoration: BoxDecoration(
-          color: Colors.grey[300],
-          borderRadius: BorderRadius.circular(12),
-        ),
-      ),
-    );
-  }
 
   Widget _buildCard(
     BuildContext context, {
@@ -696,7 +653,7 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'レッスン ${widget.lessonCount}',
+                  'レッスン $lessonCount',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey[600],
@@ -710,7 +667,7 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'クイズ ${widget.quizCount}',
+                  'クイズ $quizCount',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey[600],
@@ -751,17 +708,14 @@ class _ModuleProgressCardState extends State<_ModuleProgressCard> {
     _isNavigating = true;
 
     try {
-      final moduleService = widget.ref.read(moduleServiceProvider);
-      final module = await moduleService.getModule(widget.moduleId);
+      final contentService = widget.ref.read(contentServiceProvider);
+      final module = await contentService.getModule(widget.moduleId);
 
       if (!mounted) return;
 
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => LessonScreen(
-            module: module,
-            companyId: widget.companyId,
-          ),
+          builder: (_) => LessonScreen(module: module!),
         ),
       );
     } catch (e) {

@@ -13,33 +13,18 @@ class ExamEnrollmentScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(sessionProvider);
 
-    return session.when(
-      loading: () => Scaffold(
+    if (!session.isSignedIn) {
+      return Scaffold(
         appBar: AppBar(title: const Text('認定試験')),
-        body: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (err, stack) => Scaffold(
-        appBar: AppBar(title: const Text('認定試験')),
-        body: ErrorRetryView(
-          error: err.toString(),
-          onRetry: () => ref.refresh(sessionProvider),
+        body: const Center(
+          child: Text('ログインが必要です'),
         ),
-      ),
-      data: (sessionData) {
-        if (sessionData == null) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('認定試験')),
-            body: const Center(
-              child: Text('ログインが必要です'),
-            ),
-          );
-        }
+      );
+    }
 
-        return _ExamSelectionContent(
-          companyId: sessionData.companyId,
-          employeeId: sessionData.userId,
-        );
-      },
+    return _ExamSelectionContent(
+      companyId: session.employee!.companyId,
+      employeeId: session.employee!.id,
     );
   }
 }

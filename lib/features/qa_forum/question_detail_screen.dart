@@ -116,7 +116,7 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
 
           if (snapshot.hasError || snapshot.data?['error'] != null) {
             return ErrorRetryView(
-              error: snapshot.data?['error']?.toString() ?? 'エラーが発生しました',
+              message: snapshot.data?['error']?.toString() ?? 'エラーが発生しました',
               onRetry: () => setState(() {
                 _questionFuture = _loadQuestion();
               }),
@@ -124,7 +124,6 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
           }
 
           final question = snapshot.data ?? {};
-          final answers = question['answers'] as List? ?? [];
 
           return SingleChildScrollView(
             child: Column(

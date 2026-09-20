@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../providers/session_provider.dart';
+import '../../providers/firebase_providers.dart';
 import '../../widgets/error_retry_view.dart';
 import 'question_detail_screen.dart';
 
@@ -29,25 +30,14 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
 
-    return session.when(
-      loading: () => Scaffold(
-        appBar: AppBar(title: const Text('Q&Aフォーラム')),
-        body: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (err, stack) => Scaffold(
-        appBar: AppBar(title: const Text('Q&Aフォーラム')),
-        body: ErrorRetryView(
-          error: err.toString(),
-          onRetry: () => ref.refresh(sessionProvider),
-        ),
-      ),
-      data: (sessionData) {
-        if (sessionData == null) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Q&Aフォーラム')),
-            body: const Center(child: Text('ログインが必要です')),
-          );
-        }
+    {
+      if (!session.isSignedIn) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('Q&Aフォーラム')),
+          body: const Center(child: Text('ログインが必要です')),
+        );
+      }
+      final sessionData = session.employee!;
 
         return Scaffold(
           appBar: AppBar(
@@ -108,7 +98,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
                 child: _buildQuestionsList(
                   context,
                   sessionData.companyId,
-                  sessionData.userId,
+                  sessionData.id,
                 ),
               ),
             ],
@@ -118,8 +108,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
             child: const Icon(Icons.add),
           ),
         );
-      },
-    );
+    }
   }
 
   Widget _buildSortChip(String value, String label, IconData icon) {
@@ -147,7 +136,8 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
     String companyId,
     String employeeId,
   ) {
-    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+    Query<Map<String, dynamic>> query = ref
+        .read(firestoreProvider)
         .collection('companies')
         .doc(companyId)
         .collection('qaForum')
@@ -176,7 +166,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
 
         if (snapshot.hasError) {
           return ErrorRetryView(
-            error: snapshot.error.toString(),
+            message: snapshot.error.toString(),
             onRetry: () => setState(() {}),
           );
         }
@@ -229,7 +219,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
     final viewCount = question['viewCount'] as int? ?? 0;
     final category = question['category'] as String? ?? '';
     final createdAt = question['createdAt'] as Timestamp?;
-    final isMine = question['authorId'] as String? == employeeId;
+    final isMine = (question['authorId'] as String?) == employeeId;
 
     String timeAgo = '';
     if (createdAt != null) {
@@ -473,7 +463,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
                       _submitQuestion(
                         context,
                         sessionData.companyId,
-                        sessionData.userId,
+                        sessionData.id,
                         titleController.text,
                         descriptionController.text,
                         category,

@@ -36,6 +36,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // 同じモジュールの画面が二重に積まれてしまうため、遷移中は再タップを無視する。
   bool _isNavigating = false;
 
+  // build() のたびに FutureBuilder へ新しい Future を渡すと、完了後も
+  // 再ビルド→再取得→ローディング表示の無限ループになる(SkeletonListの
+  // アニメーションと組み合わさるとpumpAndSettleが終わらない)ため、
+  // industryId が変わらない限り同じ Future インスタンスを再利用する。
+  String? _loadedIndustryId;
+  Future<Industry?>? _industryFuture;
+  Future<List<Module>>? _modulesFuture;
+  Stream<List<Enrollment>>? _enrollmentsStream;
+
   Future<void> _openModule({
     required Module module,
     required String companyId,
@@ -95,6 +104,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
     final company = session.company!;
 
+    if (_loadedIndustryId != company.industryId) {
+      _loadedIndustryId = company.industryId;
+      _industryFuture = ref.read(contentServiceProvider).getIndustry(company.industryId);
+      _modulesFuture = null;
+      _enrollmentsStream = ref
+          .read(enrollmentServiceProvider)
+          .watchEmployeeEnrollments(company.id, session.employee!.id);
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('あなたの必須研修'),
@@ -124,7 +142,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ],
       ),
       body: FutureBuilder(
-        future: ref.read(contentServiceProvider).getIndustry(company.industryId),
+        future: _industryFuture,
         builder: (context, industrySnapshot) {
           if (industrySnapshot.hasError) {
             return const ErrorRetryView(message: '業種情報の読み込みに失敗しました');
@@ -136,8 +154,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           if (industry == null) {
             return const Center(child: Text('業種情報が見つかりませんでした'));
           }
+          _modulesFuture ??= _loadModules(industry, company);
           return FutureBuilder<List<Module>>(
-            future: _loadModules(industry, company),
+            future: _modulesFuture,
             builder: (context, modulesSnapshot) {
               if (modulesSnapshot.hasError) {
                 return const ErrorRetryView(message: '研修モジュールの読み込みに失敗しました');
@@ -153,9 +172,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 );
               }
               return StreamBuilder<List<Enrollment>>(
-                stream: ref
-                    .read(enrollmentServiceProvider)
-                    .watchEmployeeEnrollments(company.id, session.employee!.id),
+                stream: _enrollmentsStream,
                 builder: (context, enrollmentSnapshot) {
                   final focusModule = MonthlyFocus.pick(
                     priorityOrderedModules: modules,

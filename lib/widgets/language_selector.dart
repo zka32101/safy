@@ -52,7 +52,7 @@ class LanguageSelector extends ConsumerWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
-        ...SupportedLocale.supportedLocalesWithNames.map((locale) {
+        ...SupportedLocale.values.map((locale) {
           return Padding(
             padding: const EdgeInsets.only(bottom: 8.0),
             child: LanguageTile(
@@ -156,7 +156,7 @@ class LanguageDropdown extends ConsumerWidget {
 
     return DropdownButton<SupportedLocale>(
       value: currentLocale,
-      items: SupportedLocale.supportedLocalesWithNames.map((locale) {
+      items: SupportedLocale.values.map((locale) {
         return DropdownMenuItem(
           value: locale,
           child: Row(
