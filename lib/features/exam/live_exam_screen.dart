@@ -94,8 +94,8 @@ class _LiveExamScreenState extends ConsumerState<LiveExamScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final session = await ref.read(sessionProvider.future);
-      if (session == null) {
+      final session = ref.read(sessionProvider);
+      if (!session.isSignedIn) {
         throw Exception('セッション情報が取得できません');
       }
 
@@ -104,7 +104,7 @@ class _LiveExamScreenState extends ConsumerState<LiveExamScreen> {
 
       final result = await callable.call({
         'companyId': widget.companyId,
-        'employeeId': session.userId,
+        'employeeId': session.employee!.id,
         'examId': widget.examId,
         'answers': _selectedAnswers,
         'timeSpentSeconds': widget.durationMinutes * 60 - _remainingSeconds,

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../providers/session_provider.dart';
+import '../../services/secure_storage_service.dart';
 
 /// ユーザーフィードバック画面：研修体験の意見・要望を収集
 class UserFeedbackScreen extends ConsumerStatefulWidget {
@@ -37,12 +38,10 @@ class _UserFeedbackScreenState extends ConsumerState<UserFeedbackScreen> {
   }
 
   Future<void> _loadUserEmail() async {
-    final session = ref.read(sessionProvider);
-    await session.whenData((data) {
-      if (data != null) {
-        _emailController.text = data.email ?? '';
-      }
-    });
+    final email = await SecureStorageService.getUserEmail();
+    if (mounted && email != null) {
+      _emailController.text = email;
+    }
   }
 
   Future<void> _submitFeedback() async {
@@ -59,8 +58,8 @@ class _UserFeedbackScreenState extends ConsumerState<UserFeedbackScreen> {
     });
 
     try {
-      final session = await ref.read(sessionProvider.future);
-      if (session == null) {
+      final session = ref.read(sessionProvider);
+      if (!session.isSignedIn) {
         throw Exception('セッション情報が取得できません');
       }
 
@@ -69,8 +68,8 @@ class _UserFeedbackScreenState extends ConsumerState<UserFeedbackScreen> {
           functions.httpsCallable('submitUserFeedback');
 
       await callable.call({
-        'companyId': session.companyId,
-        'employeeId': session.userId,
+        'companyId': session.employee!.companyId,
+        'employeeId': session.employee!.id,
         'email': _emailController.text.trim(),
         'npsScore': _npsScore,
         'topics': _selectedTopics.toList(),

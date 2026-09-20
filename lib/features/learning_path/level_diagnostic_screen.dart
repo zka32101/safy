@@ -72,8 +72,8 @@ class _LevelDiagnosticScreenState extends ConsumerState<LevelDiagnosticScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final session = await ref.read(sessionProvider.future);
-      if (session == null) {
+      final session = ref.read(sessionProvider);
+      if (!session.isSignedIn) {
         throw Exception('セッション情報が取得できません');
       }
 
@@ -91,8 +91,8 @@ class _LevelDiagnosticScreenState extends ConsumerState<LevelDiagnosticScreen> {
       final callable = functions.httpsCallable('completeLevelDiagnostic');
 
       await callable.call({
-        'companyId': session.companyId,
-        'employeeId': session.userId,
+        'companyId': session.employee!.companyId,
+        'employeeId': session.employee!.id,
         'answers': _answers,
         'totalScore': totalScore,
         'averageScore': averageScore,
