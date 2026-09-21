@@ -23,7 +23,7 @@ class ExamEnrollmentScreen extends ConsumerWidget {
     }
 
     return _ExamSelectionContent(
-      companyId: session.company!.id,
+      companyId: session.employee!.companyId,
       employeeId: session.employee!.id,
     );
   }

@@ -30,56 +30,44 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
 
-    return session.when(
-      loading: () => Scaffold(
+    if (!session.isSignedIn) {
+      return Scaffold(
         appBar: AppBar(title: const Text('Safy')),
-        body: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (err, stack) => Scaffold(
-        appBar: AppBar(title: const Text('Safy')),
-        body: Center(child: Text('エラー: $err')),
-      ),
-      data: (sessionData) {
-        if (sessionData == null) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Safy')),
-            body: const Center(child: Text('ログインが必要です')),
-          );
-        }
+        body: const Center(child: Text('ログインが必要です')),
+      );
+    }
 
-        return Scaffold(
-          body: _screens[_selectedIndex],
-          bottomNavigationBar: BottomNavigationBar(
-            currentIndex: _selectedIndex,
-            onTap: (index) {
-              setState(() => _selectedIndex = index);
-            },
-            type: BottomNavigationBarType.fixed,
-            items: const [
-              BottomNavigationBarItem(
-                icon: Icon(Icons.home_outlined),
-                activeIcon: Icon(Icons.home),
-                label: 'ホーム',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.school_outlined),
-                activeIcon: Icon(Icons.school),
-                label: '学習パス',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.forum_outlined),
-                activeIcon: Icon(Icons.forum),
-                label: 'Q&A',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.trending_up_outlined),
-                activeIcon: Icon(Icons.trending_up),
-                label: 'マイ成長',
-              ),
-            ],
+    return Scaffold(
+      body: _screens[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) {
+          setState(() => _selectedIndex = index);
+        },
+        type: BottomNavigationBarType.fixed,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
+            label: 'ホーム',
           ),
-        );
-      },
+          BottomNavigationBarItem(
+            icon: Icon(Icons.school_outlined),
+            activeIcon: Icon(Icons.school),
+            label: '学習パス',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.forum_outlined),
+            activeIcon: Icon(Icons.forum),
+            label: 'Q&A',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.trending_up_outlined),
+            activeIcon: Icon(Icons.trending_up),
+            label: 'マイ成長',
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,6 +1,7 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'generated/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'config/app_theme.dart';
 import 'features/onboarding/startup_gate.dart';
@@ -13,6 +14,14 @@ import 'widgets/force_update_gate.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // 業種一覧・招待コードの照会は参加/登録より前に行われ、Firestoreルールがログイン済みを
+  // 要求するため、起動時に匿名ログインしておく。失敗しても起動は止めない
+  // (登録時の EmployeeService._ensureAuthUid が再試行する)。
+  try {
+    if (FirebaseAuth.instance.currentUser == null) {
+      await FirebaseAuth.instance.signInAnonymously();
+    }
+  } catch (_) {}
   await initializeLocalizationPreferences();
   runApp(const ProviderScope(child: SafyApp()));
 }
