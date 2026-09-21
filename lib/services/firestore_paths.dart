@@ -25,6 +25,10 @@ class FirestorePaths {
       '${company(companyId)}/subscriptions';
   static String reminders(String companyId) =>
       '${company(companyId)}/reminders';
+  static String examAttempts(String companyId) =>
+      '${company(companyId)}/examAttempts';
+  static String examAttempt(String companyId, String examAttemptId) =>
+      '${examAttempts(companyId)}/$examAttemptId';
 
   // --- オリジナルコンテンツ(プレミアムプラン。会社単位で完全に分離) ---
   /// 新規オリジナルモジュール一式(モジュール本体はここに保存。中身はグローバルmodulesと同じ形)
@@ -49,6 +53,10 @@ class FirestorePaths {
 
   // --- 招待コード（Join前はテナント文脈が無いためトップレベル） ---
   static const String inviteCodes = 'inviteCodes';
+
+  // --- ライブ認定試験（グローバルコンテンツ。受験結果はテナント配下のexamAttemptsへ） ---
+  static const String exams = 'exams';
+  static String examQuestions(String examId) => '$exams/$examId/questions';
 
   // --- グローバルコンテンツ（全テナント共通・読み取り専用） ---
   static const String industries = 'industries';

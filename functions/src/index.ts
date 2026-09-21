@@ -1099,6 +1099,7 @@ export const submitLiveExam = onCall(async (request) => {
     answers,
     timeSpentSeconds,
     autoSubmit,
+    backgroundCount,
   } = request.data;
 
   try {
@@ -1129,16 +1130,50 @@ export const submitLiveExam = onCall(async (request) => {
       ...doc.data(),
     }));
 
-    // 採点
+    // 採点（設問別・分野別の内訳も合わせて集計する）
     let correctCount = 0;
-    for (let i = 0; i < questions.length; i++) {
-      const question = questions[i];
-      const userAnswerKey = `option_${question.correctOption}a`;
-      const userAnswer = answers[i];
+    const questionResults: Array<{
+      questionId: string;
+      order: number;
+      category: string;
+      text: string;
+      correct: boolean;
+      selectedOption: string | null;
+      correctOption: number;
+    }> = [];
+    const categoryBreakdown: Record<string, { correct: number; total: number }> = {};
 
-      if (userAnswer === userAnswerKey) {
+    for (let i = 0; i < questions.length; i++) {
+      const question = questions[i] as {
+        id: string;
+        order: number;
+        category?: string;
+        text: string;
+        correctOption: number;
+      };
+      const category = question.category || "未分類";
+      const userAnswerKey = `option_${question.correctOption}a`;
+      const userAnswer = answers[i] ?? null;
+      const isCorrect = userAnswer === userAnswerKey;
+
+      if (isCorrect) {
         correctCount++;
       }
+
+      questionResults.push({
+        questionId: question.id,
+        order: question.order,
+        category,
+        text: question.text,
+        correct: isCorrect,
+        selectedOption: userAnswer,
+        correctOption: question.correctOption,
+      });
+
+      const bucket = categoryBreakdown[category] || { correct: 0, total: 0 };
+      bucket.total += 1;
+      if (isCorrect) bucket.correct += 1;
+      categoryBreakdown[category] = bucket;
     }
 
     const score = Math.round((correctCount / questions.length) * 100);
@@ -1147,7 +1182,7 @@ export const submitLiveExam = onCall(async (request) => {
     const examAttemptId = db.collection("exams").doc().id;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    // 試験結果を保存
+    // 試験結果を保存（分野別・設問別の分析画面で使用するため内訳も保存する）
     await db
       .collection("companies")
       .doc(companyId)
@@ -1163,6 +1198,9 @@ export const submitLiveExam = onCall(async (request) => {
         totalQuestions: questions.length,
         timeSpentSeconds,
         autoSubmit,
+        backgroundCount: backgroundCount || 0,
+        categoryBreakdown,
+        results: questionResults,
         submittedAt: now,
         createdAt: now,
       });

@@ -11,6 +11,7 @@
     {
       "id": "tier2-q1",
       "order": 1,
+      "category": "Platform",
       "text": "Tier 1 Training で学習した Platform 技術を、実務プロジェクトに適用する際の最初のステップは何か？",
       "options": [
         "即座にプロダクション環境に実装する",
@@ -23,6 +24,7 @@
     {
       "id": "tier2-q2",
       "order": 2,
+      "category": "Operations",
       "text": "Operations の観点から、チーム内での役割分担を効果的に行うためには？",
       "options": [
         "すべての作業を1人が行う",
@@ -35,6 +37,7 @@
     {
       "id": "tier2-q3",
       "order": 3,
+      "category": "Content Production",
       "text": "Content Production において、品質を担保しながらスピードを上げるには？",
       "options": [
         "品質をあきらめてスピード重視",
@@ -47,6 +50,7 @@
     {
       "id": "tier2-q4",
       "order": 4,
+      "category": "GTM Strategy",
       "text": "GTM Strategy で市場分析が重要な理由は？",
       "options": [
         "データ収集のため",
@@ -59,6 +63,7 @@
     {
       "id": "tier2-q5",
       "order": 5,
+      "category": "マネジメント・組織運営",
       "text": "4つのモジュール（Platform・Operations・Content・GTM）を統合的に運用するキーポイントは？",
       "options": [
         "各モジュールを独立して運用する",
@@ -71,6 +76,7 @@
     {
       "id": "tier2-q6",
       "order": 6,
+      "category": "マネジメント・組織運営",
       "text": "実装後の振り返り（レトロスペクティブ）の主な目的は？",
       "options": [
         "成功の自慢をすること",
@@ -83,6 +89,7 @@
     {
       "id": "tier2-q7",
       "order": 7,
+      "category": "マネジメント・組織運営",
       "text": "新入社員に Tier 1 Training の内容を指導する際のポイントは？",
       "options": [
         "講義形式のみ",
@@ -95,6 +102,7 @@
     {
       "id": "tier2-q8",
       "order": 8,
+      "category": "GTM Strategy",
       "text": "クライアントからの急な要求変更に対応する際の優先順位判定プロセスは？",
       "options": [
         "すべてすぐに応じる",
@@ -107,6 +115,7 @@
     {
       "id": "tier2-q9",
       "order": 9,
+      "category": "Operations",
       "text": "チーム間のサイロ化を防ぐための工夫は？",
       "options": [
         "各チームを完全に隔離する",
@@ -119,6 +128,7 @@
     {
       "id": "tier2-q10",
       "order": 10,
+      "category": "マネジメント・組織運営",
       "text": "中長期的な競争力向上のために、従業員のスキル開発に投資すべき理由は？",
       "options": [
         "法律で決められているから",

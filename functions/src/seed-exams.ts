@@ -37,6 +37,7 @@ interface ExamData {
   questions: Array<{
     id: string;
     order: number;
+    category?: string;
     text: string;
     options: string[];
     correctOption: number;
@@ -87,6 +88,7 @@ async function seedExams() {
           .set({
             id: question.id,
             order: question.order,
+            category: question.category || "未分類",
             text: question.text,
             options: question.options,
             correctOption: question.correctOption,

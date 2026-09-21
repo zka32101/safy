@@ -150,3 +150,154 @@ class TrainingCertificate {
         'certificateNumber': certificateNumber,
       };
 }
+
+/// モジュール単位の学習進捗集計（進捗分析ダッシュボード用）
+///
+/// [TrainingProgress] のリストから、モジュールごとの完了率・平均スコア・
+/// 平均学習時間などを集計する。Firestore/Riverpodに依存しない純粋なロジックなので
+/// ユニットテストで検証しやすい。
+class ModuleProgressStat {
+  final String moduleId;
+  final int recordCount; // このモジュールの学習記録件数
+  final int passedCount; // 合格(80%以上)件数
+  final double completionRate; // 0.0〜1.0（記録に対する合格の割合）
+  final double averageScore; // 平均最高スコア
+  final double averageQuizAttempts; // 平均クイズ受験回数
+  final Duration averageStudyDuration; // 学習開始(createdAt)〜完了/最終更新までの目安時間
+
+  const ModuleProgressStat({
+    required this.moduleId,
+    required this.recordCount,
+    required this.passedCount,
+    required this.completionRate,
+    required this.averageScore,
+    required this.averageQuizAttempts,
+    required this.averageStudyDuration,
+  });
+
+  factory ModuleProgressStat.fromRecords(
+    String moduleId,
+    List<TrainingProgress> allProgress,
+  ) {
+    final records = allProgress.where((p) => p.moduleId == moduleId).toList();
+
+    if (records.isEmpty) {
+      return ModuleProgressStat(
+        moduleId: moduleId,
+        recordCount: 0,
+        passedCount: 0,
+        completionRate: 0,
+        averageScore: 0,
+        averageQuizAttempts: 0,
+        averageStudyDuration: Duration.zero,
+      );
+    }
+
+    final passedCount = records.where((p) => p.isPassed).length;
+    final totalScore = records.fold<int>(0, (sum, p) => sum + p.maxScore);
+    final totalQuizAttempts =
+        records.fold<int>(0, (sum, p) => sum + p.quizAttempts);
+    final totalStudyMinutes = records.fold<int>(0, (sum, p) {
+      final end = p.completedAt ?? p.updatedAt;
+      final diff = end.difference(p.createdAt);
+      return sum + (diff.isNegative ? 0 : diff.inMinutes);
+    });
+
+    return ModuleProgressStat(
+      moduleId: moduleId,
+      recordCount: records.length,
+      passedCount: passedCount,
+      completionRate: passedCount / records.length,
+      averageScore: totalScore / records.length,
+      averageQuizAttempts: totalQuizAttempts / records.length,
+      averageStudyDuration:
+          Duration(minutes: (totalStudyMinutes / records.length).round()),
+    );
+  }
+}
+
+/// 期間内の1日ごとの修了件数（進捗推移グラフ用）
+class DailyProgressPoint {
+  final DateTime date;
+  final int completedCount;
+
+  const DailyProgressPoint({
+    required this.date,
+    required this.completedCount,
+  });
+}
+
+/// 進捗分析ダッシュボード・レポート画面向けの集計結果一式
+///
+/// 個人（対象社員1名分の[TrainingProgress]のみ）にも、チーム/会社全体
+/// （複数社員分の[TrainingProgress]をまとめたもの）にも同じロジックで使える。
+class TrainingProgressReport {
+  final List<ModuleProgressStat> moduleStats;
+  final int totalModules;
+  final int completedModules; // isPassed済みのユニークモジュール数
+  final double overallCompletionRate; // 0.0〜1.0
+  final double overallAverageScore;
+  final int totalQuizAttempts;
+  final List<DailyProgressPoint> dailyTrend;
+
+  const TrainingProgressReport({
+    required this.moduleStats,
+    required this.totalModules,
+    required this.completedModules,
+    required this.overallCompletionRate,
+    required this.overallAverageScore,
+    required this.totalQuizAttempts,
+    required this.dailyTrend,
+  });
+
+  factory TrainingProgressReport.build({
+    required List<String> moduleIds,
+    required List<TrainingProgress> progress,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+  }) {
+    final moduleStats = moduleIds
+        .map((id) => ModuleProgressStat.fromRecords(id, progress))
+        .toList();
+
+    final completedModuleIds =
+        progress.where((p) => p.isPassed).map((p) => p.moduleId).toSet();
+
+    final scores = progress.map((p) => p.maxScore).toList();
+    final overallAverageScore =
+        scores.isEmpty ? 0.0 : scores.reduce((a, b) => a + b) / scores.length;
+
+    final totalQuizAttempts =
+        progress.fold<int>(0, (sum, p) => sum + p.quizAttempts);
+
+    final normalizedStart =
+        DateTime(periodStart.year, periodStart.month, periodStart.day);
+    final normalizedEnd =
+        DateTime(periodEnd.year, periodEnd.month, periodEnd.day);
+    final dayCount = normalizedEnd.difference(normalizedStart).inDays + 1;
+
+    final dailyTrend = <DailyProgressPoint>[];
+    for (var i = 0; i < dayCount; i++) {
+      final day = normalizedStart.add(Duration(days: i));
+      final nextDay = day.add(const Duration(days: 1));
+      final count = progress.where((p) {
+        final completedAt = p.completedAt;
+        if (completedAt == null) return false;
+        return !completedAt.isBefore(day) && completedAt.isBefore(nextDay);
+      }).length;
+      dailyTrend.add(DailyProgressPoint(date: day, completedCount: count));
+    }
+
+    return TrainingProgressReport(
+      moduleStats: moduleStats,
+      totalModules: moduleIds.length,
+      completedModules: completedModuleIds.length,
+      overallCompletionRate: moduleIds.isEmpty
+          ? 0
+          : completedModuleIds.length / moduleIds.length,
+      overallAverageScore: overallAverageScore,
+      totalQuizAttempts: totalQuizAttempts,
+      dailyTrend: dailyTrend,
+    );
+  }
+}

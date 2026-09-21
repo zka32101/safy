@@ -2,28 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../../providers/firebase_providers.dart';
 import '../../widgets/error_retry_view.dart';
 
 /// 従業員の研修詳細画面：各モジュール別の進捗・スコア・再試行履歴を表示
 class EmployeeDetailScreen extends ConsumerWidget {
   final String companyId;
   final String employeeId;
+  final String? employeeName;
 
   const EmployeeDetailScreen({
     super.key,
     required this.companyId,
     required this.employeeId,
+    this.employeeName,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final firestore = ref.watch(firestoreProvider);
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('従業員詳細: $employeeId'),
+        title: Text('従業員詳細: ${employeeName ?? employeeId}'),
         elevation: 0,
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
+        stream: firestore
             .collection('companies')
             .doc(companyId)
             .collection('trainingAttempts')
@@ -36,7 +41,7 @@ class EmployeeDetailScreen extends ConsumerWidget {
 
           if (snapshot.hasError) {
             return ErrorRetryView(
-              error: snapshot.error.toString(),
+              message: '受講記録の読み込みに失敗しました: ${snapshot.error}',
               onRetry: () {},
             );
           }
