@@ -24,7 +24,6 @@ dependencies:
   cloud_firestore: ^5.0.0
   cloud_functions: ^5.0.0
   firebase_analytics: ^11.0.0
-  firebase_crashlytics: ^4.0.0
   firebase_remote_config: ^5.0.0
   firebase_messaging: ^15.0.0
   # フォアグラウンド時(FirebaseMessaging.onMessageで受信)にプッシュ通知を
