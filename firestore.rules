@@ -114,7 +114,8 @@ service cloud.firestore {
 
       match /subscriptions/{subscriptionId} {
         allow read: if isCompanyMember(companyId);
-        allow write: if isCompanyMember(companyId);
+        // 契約の作成・変更は管理者のみ(個人利用は自分専用の会社の管理者として扱われる)
+        allow write: if isAdmin(companyId);
       }
 
       match /reminders/{reminderId} {
