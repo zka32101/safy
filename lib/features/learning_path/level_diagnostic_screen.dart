@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../providers/session_provider.dart';
+import 'diagnostic_recommendation.dart';
 
 /// レベル診断画面：従業員のスキルレベルを判定して学習パス推奨
 class LevelDiagnosticScreen extends ConsumerStatefulWidget {
@@ -19,6 +20,7 @@ class _LevelDiagnosticScreenState extends ConsumerState<LevelDiagnosticScreen> {
   bool _isSubmitting = false;
   int? _diagnosticScore;
   String? _recommendedLevel; // beginner, intermediate, advanced
+  List<String> _weakCategories = []; // 回答パターンから推定した弱点分野
 
   final diagnosticQuestions = [
     {
@@ -86,6 +88,9 @@ class _LevelDiagnosticScreenState extends ConsumerState<LevelDiagnosticScreen> {
       final averageScore = totalScore / diagnosticQuestions.length;
       final recommendedLevel = _determineLevel(averageScore);
 
+      // 各質問の回答パターンから弱点分野を推定（経験・スキルが浅い分野を抽出）
+      final weakCategories = determineWeakCategories(_answers);
+
       // Cloud Functions で診断結果を保存
       final functions = FirebaseFunctions.instance;
       final callable = functions.httpsCallable('completeLevelDiagnostic');
@@ -97,11 +102,13 @@ class _LevelDiagnosticScreenState extends ConsumerState<LevelDiagnosticScreen> {
         'totalScore': totalScore,
         'averageScore': averageScore,
         'recommendedLevel': recommendedLevel,
+        'weakCategories': weakCategories,
       });
 
       setState(() {
         _diagnosticScore = totalScore;
         _recommendedLevel = recommendedLevel;
+        _weakCategories = weakCategories;
         _isSubmitting = false;
       });
 
@@ -172,6 +179,30 @@ class _LevelDiagnosticScreenState extends ConsumerState<LevelDiagnosticScreen> {
               levelDescriptions[_recommendedLevel] ?? '',
               style: const TextStyle(fontSize: 14),
             ),
+            if (_weakCategories.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text(
+                '重点的に学習をお勧めする分野：',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _weakCategories
+                    .map(
+                      (category) => Chip(
+                        label: Text(
+                          category,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        backgroundColor: Colors.orange.withOpacity(0.1),
+                        side: BorderSide(color: Colors.orange[300]!),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
           ],
         ),
         actions: [

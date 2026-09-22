@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/firebase_providers.dart';
+import '../../services/firestore_paths.dart';
 import '../../widgets/error_retry_view.dart';
 import 'question_detail_screen.dart';
 
@@ -138,9 +139,7 @@ class _QAForumScreenState extends ConsumerState<QAForumScreen> {
   ) {
     Query<Map<String, dynamic>> query = ref
         .read(firestoreProvider)
-        .collection('companies')
-        .doc(companyId)
-        .collection('qaForum')
+        .collection(FirestorePaths.qaForum(companyId))
         .where('status', isEqualTo: 'active');
 
     if (_searchQuery.isNotEmpty) {

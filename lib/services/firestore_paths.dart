@@ -64,4 +64,15 @@ class FirestorePaths {
   static String lessons(String moduleId) => 'modules/$moduleId/lessons';
   static String quizQuestions(String moduleId) =>
       'modules/$moduleId/quizQuestions';
+
+  // --- Q&Aフォーラム（企業単位で分離） ---
+  static String qaForum(String companyId) =>
+      '${company(companyId)}/qaForum';
+  static String qaQuestion(String companyId, String questionId) =>
+      '${qaForum(companyId)}/$questionId';
+  static String qaAnswers(String companyId, String questionId) =>
+      '${qaQuestion(companyId, questionId)}/answers';
+  static String qaAnswer(
+          String companyId, String questionId, String answerId) =>
+      '${qaAnswers(companyId, questionId)}/$answerId';
 }

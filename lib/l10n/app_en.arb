@@ -31,6 +31,7 @@
   "auth_invalidEmail": "Please enter a valid email address",
   "auth_passwordTooShort": "Password must be at least 6 characters",
   "auth_passwordsDoNotMatch": "Passwords do not match",
+  "auth_signInRequired": "Sign-in required",
 
   "onboarding_welcome": "Welcome to Safy",
   "onboarding_selectIndustry": "Select your industry",
@@ -129,5 +130,95 @@
   "error_notFound": "Not found",
   "error_unauthorized": "Unauthorized",
   "error_tryAgain": "Please try again",
-  "error_contactSupport": "Please contact support"
+  "error_contactSupport": "Please contact support",
+
+  "nav_home": "Home",
+  "nav_learningPath": "Learning Path",
+  "nav_qaForum": "Q&A",
+  "nav_myGrowth": "My Growth",
+
+  "home_requiredTrainingTitle": "Your Required Training",
+  "home_sessionNotFound": "Session not found",
+  "home_adminMenuTooltip": "Admin Menu",
+  "home_industryLoadError": "Failed to load industry information",
+  "home_industryNotFound": "Industry information not found",
+  "home_modulesLoadError": "Failed to load training modules",
+  "home_noModules": "No training modules yet",
+  "home_tier1Title": "Tier 1 Training",
+  "home_tier1Period": "Sep 16-22 Self-Study Period",
+  "home_tier1Description": "4 modules, 16 hours total",
+  "home_liveExamTitle": "Live Certification Exam",
+  "home_liveExamPeriod": "Held Oct 10-20",
+  "home_liveExamDescription": "Take on the Tier 2/3 exams",
+  "home_monthlyRequiredModule": "This Month's Required Module",
+  "home_requiredBadge": "Required",
+  "home_optionalBadge": "Optional",
+  "home_freeTrialBadge": "Free Trial",
+  "home_deadlineUpcoming": "Due Soon",
+  "home_deadlineOverdue": "Overdue",
+
+  "learningPath_customTitle": "Custom Learning Path",
+  "learningPath_loadErrorTitle": "Failed to Load Learning Path",
+  "learningPath_levelBeginner": "Beginner",
+  "learningPath_levelIntermediate": "Intermediate",
+  "learningPath_levelAdvanced": "Advanced",
+  "learningPath_recommendedModulesTitle": "Recommended Modules",
+  "learningPath_noModules": "No modules are available for this level yet",
+  "learningPath_estimatedHours": "Estimated study time: {hours} hours",
+  "@learningPath_estimatedHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "learningPath_moduleFallbackTitle": "Module",
+
+  "qaForum_title": "Q&A Forum",
+  "qaForum_searchHint": "Search questions...",
+  "qaForum_sortRecent": "Recent",
+  "qaForum_sortPopular": "Popular",
+  "qaForum_sortUnanswered": "Unanswered",
+  "qaForum_noQuestions": "No questions yet",
+  "qaForum_myQuestionBadge": "Mine",
+  "qaForum_anonymousAuthor": "Anonymous",
+  "qaForum_askQuestionTitle": "Post a Question",
+  "qaForum_titleFieldLabel": "Title*",
+  "qaForum_titleFieldHint": "Enter the title of your question",
+  "qaForum_descriptionFieldLabel": "Details",
+  "qaForum_descriptionFieldHint": "Add more details (optional)",
+  "qaForum_categoryFieldLabel": "Category",
+  "qaForum_categoryContent": "Content Understanding",
+  "qaForum_categorySkillApplication": "Skill Application",
+  "qaForum_categoryToolsSystem": "Tools & Systems",
+  "qaForum_categoryCareer": "Career",
+  "qaForum_categoryOther": "Other",
+  "qaForum_postButton": "Post",
+  "qaForum_titleRequiredError": "Please enter a title",
+  "qaForum_postSuccess": "Your question has been posted",
+  "qaForum_postError": "Failed to post your question",
+  "qaForum_minutesAgo": "{minutes} min ago",
+  "@qaForum_minutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "qaForum_hoursAgo": "{hours} hr ago",
+  "@qaForum_hoursAgo": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "qaForum_daysAgo": "{days} days ago",
+  "@qaForum_daysAgo": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  }
 }

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:fl_chart/fl_chart.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/enrollment_model.dart';
+import '../../../data/models/team_model.dart';
 import '../../../core/dashboard_analytics.dart';
 import '../../../core/churn_risk.dart';
+import '../../../providers/firebase_providers.dart';
 import '../../../providers/service_providers.dart';
 import '../../../providers/session_provider.dart';
 import '../reminder/reminder_screen.dart';
@@ -19,6 +22,19 @@ import '../team_comparison/team_comparison_screen.dart';
 import '../../../widgets/error_retry_view.dart';
 import '../../../widgets/skeleton_loader.dart';
 
+/// 個人別一覧の部署フィルタで「全部署」を表す値(チームIDと衝突しないよう専用の値を使う)
+const String _kAllTeamsFilter = '__all__';
+
+/// 個人別一覧の並び替え条件
+enum _EmployeeSortOption {
+  nameAsc('氏名順'),
+  progressDesc('進捗率が高い順'),
+  progressAsc('進捗率が低い順');
+
+  final String label;
+  const _EmployeeSortOption(this.label);
+}
+
 /// 履修状況ダッシュボード(チーム別・個人別)。設計書 Must③。
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -31,6 +47,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
   // 業種のモジュール総数はほぼ不変のため、enrollments/employeesのライブ更新のたびに
   // 再取得してダッシュボード全体がスケルトンに戻る(ちらつく)ことがないよう一度だけ取得する。
   late final Future<int> _totalModulesFuture;
+  // チーム一覧も同様に不変性が高いため一度だけ取得する(team_comparison_screenと同じ方針)。
+  late final Future<List<Team>> _teamsFuture;
+
+  String _selectedTeamId = _kAllTeamsFilter;
+  _EmployeeSortOption _sortOption = _EmployeeSortOption.nameAsc;
 
   @override
   void initState() {
@@ -47,6 +68,256 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           await ref.read(customContentServiceProvider).listCustomModules(company.id);
       return modules.length + customModules.length;
     });
+    _teamsFuture = ref
+        .read(firestoreProvider)
+        .collection('companies/${company.id}/teams')
+        .get()
+        .then((snap) => snap.docs.map((d) => Team.fromMap(d.id, d.data())).toList());
+  }
+
+  /// 部署フィルタ・並び替えを適用した個人別一覧を返す。
+  List<EmployeeCompletionStat> _applyFilterAndSort(
+    List<EmployeeCompletionStat> stats,
+    Map<String, String> employeeTeamId,
+  ) {
+    var filtered = _selectedTeamId == _kAllTeamsFilter
+        ? stats
+        : stats
+            .where((s) => (employeeTeamId[s.employeeId] ?? '') == _selectedTeamId)
+            .toList();
+
+    filtered = List<EmployeeCompletionStat>.from(filtered);
+
+    switch (_sortOption) {
+      case _EmployeeSortOption.nameAsc:
+        filtered.sort((a, b) => a.displayName.compareTo(b.displayName));
+        break;
+      case _EmployeeSortOption.progressDesc:
+        filtered.sort(
+            (a, b) => b.completionRatePercent.compareTo(a.completionRatePercent));
+        break;
+      case _EmployeeSortOption.progressAsc:
+        filtered.sort(
+            (a, b) => a.completionRatePercent.compareTo(b.completionRatePercent));
+        break;
+    }
+
+    return filtered;
+  }
+
+  /// 従業員進捗の内訳(修了/進行中/未着手)を円グラフで可視化
+  Widget _buildProgressChartSection(
+    ColorScheme colorScheme,
+    List<EmployeeCompletionStat> stats,
+  ) {
+    final total = stats.length;
+    if (total == 0) {
+      return const SizedBox.shrink();
+    }
+
+    final completed = stats
+        .where((s) => s.totalModuleCount > 0 && s.completedCount >= s.totalModuleCount)
+        .length;
+    final notStarted = stats.where((s) => s.completedCount == 0).length;
+    final inProgress = total - completed - notStarted;
+
+    final sections = <PieChartSectionData>[
+      if (completed > 0)
+        PieChartSectionData(
+          value: completed.toDouble(),
+          color: Colors.green,
+          title: '$completed',
+          radius: 52,
+          titleStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      if (inProgress > 0)
+        PieChartSectionData(
+          value: inProgress.toDouble(),
+          color: Colors.orange,
+          title: '$inProgress',
+          radius: 52,
+          titleStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      if (notStarted > 0)
+        PieChartSectionData(
+          value: notStarted.toDouble(),
+          color: Colors.grey,
+          title: '$notStarted',
+          radius: 52,
+          titleStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+    ];
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '進捗内訳',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 140,
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: PieChart(
+                      PieChartData(
+                        sections: sections,
+                        sectionsSpace: 2,
+                        centerSpaceRadius: 24,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildChartLegendRow(Colors.green, '修了', completed),
+                        const SizedBox(height: 8),
+                        _buildChartLegendRow(Colors.orange, '進行中', inProgress),
+                        const SizedBox(height: 8),
+                        _buildChartLegendRow(Colors.grey, '未着手', notStarted),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChartLegendRow(Color color, String label, int count) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
+        Text(
+          '$count名',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+
+  /// 個人別一覧の部署フィルタ・並び替えバー
+  Widget _buildFilterSortBar(List<Team> teams) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _buildDropdownField<String>(
+            label: '部署',
+            value: _selectedTeamId,
+            items: [
+              const DropdownMenuItem(
+                value: _kAllTeamsFilter,
+                child: Text('全部署'),
+              ),
+              ...teams.map(
+                (team) => DropdownMenuItem(
+                  value: team.id,
+                  child: Text(team.teamName, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+              const DropdownMenuItem(
+                value: '',
+                child: Text('未所属'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _selectedTeamId = value);
+            },
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildDropdownField<_EmployeeSortOption>(
+            label: '並び替え',
+            value: _sortOption,
+            items: _EmployeeSortOption.values
+                .map(
+                  (option) => DropdownMenuItem(
+                    value: option,
+                    child: Text(option.label, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _sortOption = value);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDropdownField<T>({
+    required String label,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[400]!),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: value,
+              isExpanded: true,
+              isDense: true,
+              items: items,
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -124,18 +395,29 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           ),
         ],
       ),
-      body: FutureBuilder<int>(
-        future: _totalModulesFuture,
-        builder: (context, totalModulesSnapshot) {
-          if (totalModulesSnapshot.hasError) {
-            return const ErrorRetryView(message: 'モジュール数の集計に失敗しました');
+      body: FutureBuilder<List<Team>>(
+        future: _teamsFuture,
+        builder: (context, teamsSnapshot) {
+          if (teamsSnapshot.hasError) {
+            return const ErrorRetryView(message: 'チーム一覧の読み込みに失敗しました');
           }
-          if (!totalModulesSnapshot.hasData) {
+          if (!teamsSnapshot.hasData) {
             return const SkeletonList();
           }
-          final totalModules = totalModulesSnapshot.data!;
+          final teams = teamsSnapshot.data!;
 
-          return StreamBuilder<List<Employee>>(
+          return FutureBuilder<int>(
+            future: _totalModulesFuture,
+            builder: (context, totalModulesSnapshot) {
+              if (totalModulesSnapshot.hasError) {
+                return const ErrorRetryView(message: 'モジュール数の集計に失敗しました');
+              }
+              if (!totalModulesSnapshot.hasData) {
+                return const SkeletonList();
+              }
+              final totalModules = totalModulesSnapshot.data!;
+
+              return StreamBuilder<List<Employee>>(
             stream: ref.read(employeeServiceProvider).watchCompanyEmployees(company.id),
             builder: (context, employeeSnapshot) {
               if (employeeSnapshot.hasError) {
@@ -145,6 +427,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                 return const SkeletonList();
               }
               final employees = employeeSnapshot.data!;
+              final employeeTeamId = {for (final e in employees) e.id: e.teamId};
 
               return StreamBuilder<List<Enrollment>>(
                 stream:
@@ -169,6 +452,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     daysSinceCompanyCreated:
                         DateTime.now().difference(company.createdAt).inDays,
                   );
+                  final visibleStats = _applyFilterAndSort(stats, employeeTeamId);
 
                   final colorScheme = Theme.of(context).colorScheme;
                   return Column(
@@ -234,16 +518,20 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                             ),
                           ),
                         ),
-                      const SizedBox(height: 4),
+                      _buildProgressChartSection(colorScheme, stats),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                        child: _buildFilterSortBar(teams),
+                      ),
                       Expanded(
-                        child: ListView.builder(
-                          itemCount: stats.length,
+                        child: visibleStats.isEmpty
+                            ? const Center(child: Text('該当する社員がいません'))
+                            : ListView.builder(
+                          itemCount: visibleStats.length,
                           itemBuilder: (context, index) {
-                            final stat = stats[index];
-                            final employee = employees.firstWhere(
-                              (e) => e.id == stat.employeeId,
-                              orElse: () => employees[index],
-                            );
+                            final stat = visibleStats[index];
+                            final employee =
+                                employees.firstWhere((e) => e.id == stat.employeeId);
                             return Card(
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(12),
@@ -299,7 +587,10 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
             },
           );
         },
-      ),
-    );
+      );
+            },
+          ),
+        );
   }
 }
+

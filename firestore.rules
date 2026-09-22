@@ -52,10 +52,28 @@ service cloud.firestore {
       }
     }
 
+    // 認定試験(Tier2/Tier3)の問題セット。管理はConsole/Admin SDKのみ。
+    match /exams/{examId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+
+      match /questions/{questionId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+
+    match /examQuestions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     // --- 招待コード(Join前は所属会社が未確定のためトップレベル) ---
     match /inviteCodes/{code} {
-      // 未参加の匿名ユーザーが自分のコードを解決できるよう読み取りは認証済みなら許可
-      allow read: if isSignedIn();
+      // 未参加の匿名ユーザーが自分のコードを個別解決できるよう get は許可するが、
+      // 全社横断でコードを列挙されないよう list(コレクションクエリ)は禁止する。
+      allow get: if isSignedIn();
+      allow list: if false;
       // 発行・失効化は管理者のみ(companyIdはリソース内のフィールドで検証)
       allow create: if isAdmin(request.resource.data.companyId);
       allow update: if isAdmin(resource.data.companyId);
@@ -76,26 +94,49 @@ service cloud.firestore {
 
       match /employees/{employeeId} {
         allow read: if isCompanyMember(companyId);
-        // 招待コード参加・管理者登録は「自分自身のuidをドキュメントIDにして作成」のみ許可
-        allow create: if isSelf(employeeId);
-        allow update: if isAdmin(companyId) || isSelf(employeeId);
+        // 招待コード参加・管理者登録は「自分自身のuidをドキュメントIDにして作成」のみ許可。
+        // 自己登録経路(client)では role を常に 'member' 固定にし、admin昇格は
+        // Cloud Functions(Admin SDK)経由でのみ行う想定とする。
+        allow create: if isSelf(employeeId) &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.role == 'member';
+        // 管理者は全フィールド更新可。本人更新は role/companyId の変更を禁止し、
+        // 自己昇格や他社への付け替えを防ぐ。
+        allow update: if isAdmin(companyId) ||
+          (isSelf(employeeId) &&
+           request.resource.data.role == resource.data.role &&
+           request.resource.data.companyId == resource.data.companyId);
         allow delete: if isAdmin(companyId);
       }
 
       match /enrollments/{enrollmentId} {
         allow read: if isCompanyMember(companyId) &&
           (isAdmin(companyId) || resource.data.employeeId == request.auth.uid);
-        allow create: if isSignedIn() && request.resource.data.employeeId == request.auth.uid;
-        allow update: if isSignedIn() && resource.data.employeeId == request.auth.uid;
+        allow create: if isCompanyMember(companyId) && request.resource.data.employeeId == request.auth.uid;
+        allow update: if isCompanyMember(companyId) && resource.data.employeeId == request.auth.uid;
         allow delete: if false;
       }
 
       match /progressRecords/{recordId} {
         allow read: if isCompanyMember(companyId) &&
           (isAdmin(companyId) || resource.data.employeeId == request.auth.uid);
-        allow create: if isSignedIn() && request.resource.data.employeeId == request.auth.uid;
-        allow update: if isSignedIn() && resource.data.employeeId == request.auth.uid;
+        allow create: if isCompanyMember(companyId) && request.resource.data.employeeId == request.auth.uid;
+        allow update: if isCompanyMember(companyId) && resource.data.employeeId == request.auth.uid;
         allow delete: if false;
+      }
+
+      // Cloud Functions(recordTrainingProgress)経由でのみ記録される受講進捗ログ。
+      match /trainingAttempts/{attemptId} {
+        allow read: if isCompanyMember(companyId) &&
+          (isAdmin(companyId) || resource.data.employeeId == request.auth.uid);
+        allow write: if false;
+      }
+
+      // Cloud Functions(submitLiveExam)経由でのみ記録される認定試験の受験結果。
+      match /examAttempts/{attemptId} {
+        allow read: if isCompanyMember(companyId) &&
+          (isAdmin(companyId) || resource.data.employeeId == request.auth.uid);
+        allow write: if false;
       }
 
       // 監査証跡: 改ざん防止のためクライアントからの書き込みは一切禁止。

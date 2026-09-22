@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import '../../providers/session_provider.dart';
+import '../../providers/firebase_providers.dart';
+import '../../services/firestore_paths.dart';
 import '../../widgets/error_retry_view.dart';
 
 /// Q&A フォーラム質問詳細画面
-class QuestionDetailScreen extends StatefulWidget {
+class QuestionDetailScreen extends ConsumerStatefulWidget {
   final String questionId;
   final String companyId;
 
@@ -15,46 +18,36 @@ class QuestionDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<QuestionDetailScreen> createState() => _QuestionDetailScreenState();
+  ConsumerState<QuestionDetailScreen> createState() =>
+      _QuestionDetailScreenState();
 }
 
-class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
-  late Future<Map<String, dynamic>> _questionFuture;
+class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
   final _answerController = TextEditingController();
   bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
-    _questionFuture = _loadQuestion();
+    // ビュー数をインクリメント（失敗しても画面表示には影響させない）
+    _incrementViewCount();
   }
 
-  Future<Map<String, dynamic>> _loadQuestion() async {
+  Future<void> _incrementViewCount() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('companies')
-          .doc(widget.companyId)
-          .collection('qaForum')
-          .doc(widget.questionId)
-          .get();
-
-      if (!doc.exists) {
-        return {'error': '質問が見つかりません'};
-      }
-
-      // ビュー数をインクリメント
-      await doc.reference.update({
+      final firestore = ref.read(firestoreProvider);
+      await firestore
+          .doc(FirestorePaths.qaQuestion(widget.companyId, widget.questionId))
+          .update({
         'viewCount': FieldValue.increment(1),
       });
-
-      return {'id': widget.questionId, ...doc.data() as Map<String, dynamic>};
-    } catch (e) {
-      return {'error': e.toString()};
+    } catch (_) {
+      // 閲覧数の更新に失敗しても致命的ではないため無視する
     }
   }
 
-  Future<void> _submitAnswer(String questionData) async {
-    if (_answerController.text.isEmpty) {
+  Future<void> _submitAnswer() async {
+    if (_answerController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('回答を入力してください')),
       );
@@ -64,7 +57,7 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final functions = FirebaseFunctions.instance;
+      final functions = ref.read(functionsProvider);
       final callable = functions.httpsCallable('submitAnswer');
 
       await callable.call({
@@ -74,21 +67,62 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
       });
 
       _answerController.clear();
-      setState(() {
-        _isSubmitting = false;
-        _questionFuture = _loadQuestion();
-      });
 
       if (mounted) {
+        setState(() => _isSubmitting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('回答を投稿しました')),
         );
       }
     } catch (e) {
-      setState(() => _isSubmitting = false);
       if (mounted) {
+        setState(() => _isSubmitting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('投稿に失敗しました')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleBestAnswer(String answerId, bool isCurrentlyBest) async {
+    try {
+      final functions = ref.read(functionsProvider);
+      await functions.httpsCallable('setBestAnswer').call({
+        'companyId': widget.companyId,
+        'questionId': widget.questionId,
+        'answerId': answerId,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isCurrentlyBest ? 'ベストアンサーを解除しました' : 'ベストアンサーに選択しました',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ベストアンサーの設定に失敗しました')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleHelpful(String answerId) async {
+    try {
+      final functions = ref.read(functionsProvider);
+      await functions.httpsCallable('toggleAnswerHelpful').call({
+        'companyId': widget.companyId,
+        'questionId': widget.questionId,
+        'answerId': answerId,
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('リアクションの送信に失敗しました')),
         );
       }
     }
@@ -102,40 +136,56 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final session = ref.watch(sessionProvider);
+    final firestore = ref.watch(firestoreProvider);
+    final currentEmployeeId = session.employee?.id;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('質問詳細'),
         elevation: 0,
       ),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: _questionFuture,
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: firestore
+            .doc(FirestorePaths.qaQuestion(widget.companyId, widget.questionId))
+            .snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (snapshot.hasError || snapshot.data?['error'] != null) {
+          if (snapshot.hasError) {
             return ErrorRetryView(
-              message: snapshot.data?['error']?.toString() ?? 'エラーが発生しました',
-              onRetry: () => setState(() {
-                _questionFuture = _loadQuestion();
-              }),
+              message: snapshot.error.toString(),
+              onRetry: () => setState(() {}),
             );
           }
 
-          final question = snapshot.data ?? {};
+          final doc = snapshot.data;
+          if (doc == null || !doc.exists) {
+            return const ErrorRetryView(message: '質問が見つかりません');
+          }
+
+          final question = {'id': doc.id, ...doc.data()!};
+          final isQuestionAuthor = currentEmployeeId != null &&
+              (question['authorId'] as String?) == currentEmployeeId;
 
           return SingleChildScrollView(
             child: Column(
               children: [
                 _buildQuestionSection(question),
-                _buildAnswersSection(question),
+                _buildAnswersSection(
+                  firestore,
+                  currentEmployeeId,
+                  isQuestionAuthor,
+                ),
               ],
             ),
           );
         },
       ),
-      bottomNavigationBar: _buildAnswerInput(context),
+      bottomNavigationBar: _buildAnswerInput(session),
     );
   }
 
@@ -247,25 +297,37 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
     );
   }
 
-  Widget _buildAnswersSection(Map<String, dynamic> question) {
+  Widget _buildAnswersSection(
+    FirebaseFirestore firestore,
+    String? currentEmployeeId,
+    bool isQuestionAuthor,
+  ) {
     return Container(
       padding: const EdgeInsets.all(16),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('companies')
-            .doc(widget.companyId)
-            .collection('qaForum')
-            .doc(widget.questionId)
-            .collection('answers')
+      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: firestore
+            .collection(
+                FirestorePaths.qaAnswers(widget.companyId, widget.questionId))
             .where('status', isEqualTo: 'active')
             .orderBy('createdAt', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final answers = snapshot.data?.docs ?? [];
+          final answers = List<QueryDocumentSnapshot<Map<String, dynamic>>>.from(
+            snapshot.data?.docs ?? [],
+          );
+
+          // ベストアンサーを先頭に表示する
+          answers.sort((a, b) {
+            final aIsBest = (a.data()['isBestAnswer'] as bool?) ?? false;
+            final bIsBest = (b.data()['isBestAnswer'] as bool?) ?? false;
+            if (aIsBest == bIsBest) return 0;
+            return aIsBest ? -1 : 1;
+          });
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -292,81 +354,11 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
                   ),
                 )
               else
-                ...answers.map((doc) {
-                  final answer = doc.data() as Map<String, dynamic>;
-                  final content = answer['content'] as String? ?? '';
-                  final authorName = answer['authorName'] as String? ?? '';
-                  final createdAt = answer['createdAt'] as Timestamp?;
-                  final likes = answer['likes'] as int? ?? 0;
-
-                  String timeAgo = '';
-                  if (createdAt != null) {
-                    final now = DateTime.now();
-                    final created = createdAt.toDate();
-                    final diff = now.difference(created);
-
-                    if (diff.inHours < 1) {
-                      timeAgo = '${diff.inMinutes}分前';
-                    } else if (diff.inDays < 1) {
-                      timeAgo = '${diff.inHours}時間前';
-                    } else {
-                      timeAgo = '${diff.inDays}日前';
-                    }
-                  }
-
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[50],
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.grey[300]!),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            content,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Text(
-                                authorName,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                timeAgo,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[500],
-                                ),
-                              ),
-                              const Spacer(),
-                              Icon(Icons.favorite_outline,
-                                  size: 16, color: Colors.grey[500]),
-                              const SizedBox(width: 4),
-                              Text(
-                                likes.toString(),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
+                ...answers.map((doc) => _buildAnswerCard(
+                      doc,
+                      currentEmployeeId,
+                      isQuestionAuthor,
+                    )),
             ],
           );
         },
@@ -374,7 +366,159 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
     );
   }
 
-  Widget _buildAnswerInput(BuildContext context) {
+  Widget _buildAnswerCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    String? currentEmployeeId,
+    bool isQuestionAuthor,
+  ) {
+    final answer = doc.data();
+    final answerId = doc.id;
+    final content = answer['content'] as String? ?? '';
+    final authorName = answer['authorName'] as String? ?? '';
+    final createdAt = answer['createdAt'] as Timestamp?;
+    final likes = answer['likes'] as int? ?? 0;
+    final isBestAnswer = (answer['isBestAnswer'] as bool?) ?? false;
+    final helpfulEmployeeIds =
+        (answer['helpfulEmployeeIds'] as List?)?.cast<String>() ?? const [];
+    final hasReacted = currentEmployeeId != null &&
+        helpfulEmployeeIds.contains(currentEmployeeId);
+
+    String timeAgo = '';
+    if (createdAt != null) {
+      final now = DateTime.now();
+      final created = createdAt.toDate();
+      final diff = now.difference(created);
+
+      if (diff.inHours < 1) {
+        timeAgo = '${diff.inMinutes}分前';
+      } else if (diff.inDays < 1) {
+        timeAgo = '${diff.inHours}時間前';
+      } else {
+        timeAgo = '${diff.inDays}日前';
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isBestAnswer ? Colors.amber.withOpacity(0.12) : Colors.grey[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isBestAnswer ? Colors.amber[700]! : Colors.grey[300]!,
+            width: isBestAnswer ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (isBestAnswer)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.emoji_events, size: 18, color: Colors.amber[800]),
+                    const SizedBox(width: 4),
+                    Text(
+                      'ベストアンサー',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.amber[800],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            Text(
+              content,
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  authorName,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  timeAgo,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                  ),
+                ),
+                const Spacer(),
+                if (isQuestionAuthor)
+                  TextButton.icon(
+                    onPressed: () => _toggleBestAnswer(answerId, isBestAnswer),
+                    icon: Icon(
+                      isBestAnswer
+                          ? Icons.emoji_events
+                          : Icons.emoji_events_outlined,
+                      size: 16,
+                      color: isBestAnswer ? Colors.amber[800] : Colors.grey[600],
+                    ),
+                    label: Text(
+                      isBestAnswer ? '選択解除' : 'ベストアンサーに選択',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isBestAnswer ? Colors.amber[800] : Colors.grey[600],
+                      ),
+                    ),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(0, 32),
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: currentEmployeeId == null
+                      ? null
+                      : () => _toggleHelpful(answerId),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          hasReacted ? Icons.favorite : Icons.favorite_outline,
+                          size: 16,
+                          color: hasReacted ? Colors.red[400] : Colors.grey[500],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          likes.toString(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: hasReacted ? Colors.red[400] : Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnswerInput(SessionState session) {
+    if (!session.isSignedIn) {
+      return const SizedBox.shrink();
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -405,7 +549,7 @@ class _QuestionDetailScreenState extends State<QuestionDetailScreen> {
               ),
               const SizedBox(width: 8),
               ElevatedButton(
-                onPressed: _isSubmitting ? null : () => _submitAnswer(''),
+                onPressed: _isSubmitting ? null : _submitAnswer,
                 child: _isSubmitting
                     ? const SizedBox(
                         width: 20,
