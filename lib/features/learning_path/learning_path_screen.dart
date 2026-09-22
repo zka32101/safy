@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/firebase_providers.dart';
 import '../../widgets/error_retry_view.dart';
+import '../../data/models/training_progress_model.dart';
+import 'diagnostic_recommendation.dart';
 
 /// 学習パスレコメンデーション画面：診断結果に基づく個別学習計画
 class LearningPathScreen extends ConsumerStatefulWidget {
@@ -103,12 +105,70 @@ class _LearningPathContentState extends ConsumerState<_LearningPathContent> {
         }
       }
 
+      // 診断結果（回答パターン）から弱点分野を推定
+      List<String> weakCategories = [];
+      try {
+        final diagnosticsSnapshot = await firestore
+            .collection('companies')
+            .doc(widget.companyId)
+            .collection('employeeDiagnostics')
+            .where('employeeId', isEqualTo: widget.employeeId)
+            .orderBy('completedAt', descending: true)
+            .limit(1)
+            .get();
+
+        if (diagnosticsSnapshot.docs.isNotEmpty) {
+          final diagnosticData = diagnosticsSnapshot.docs.first.data();
+          final answers =
+              normalizeDiagnosticAnswers(diagnosticData['answers']);
+          weakCategories = determineWeakCategories(answers);
+        }
+      } catch (_) {
+        // 診断結果が未実施/取得失敗でも学習パス自体の表示は継続する
+      }
+
+      // 過去の受講履歴（進捗が低いモジュール・未受講モジュールの判定に使用）
+      final progressByModuleId = <String, ModuleProgressSummary>{};
+      try {
+        final attemptsSnapshot = await firestore
+            .collection('companies')
+            .doc(widget.companyId)
+            .collection('trainingAttempts')
+            .where('employeeId', isEqualTo: widget.employeeId)
+            .get();
+
+        for (final doc in attemptsSnapshot.docs) {
+          final attempt = TrainingProgress.fromMap(doc.data());
+          final existing = progressByModuleId[attempt.moduleId];
+          // 同一モジュールに複数の受講記録がある場合は、合格済み・高スコアの記録を優先する
+          if (existing == null ||
+              (attempt.isPassed && !existing.isPassed) ||
+              attempt.maxScore > existing.maxScore) {
+            progressByModuleId[attempt.moduleId] = ModuleProgressSummary(
+              isPassed: attempt.isPassed,
+              maxScore: attempt.maxScore,
+              lessonsCompleted: attempt.lessonsCompleted,
+            );
+          }
+        }
+      } catch (_) {
+        // 受講履歴が取得できなくても、おすすめ無しで学習パスの表示は継続する
+      }
+
+      final recommendations = buildModuleRecommendations(
+        modules: modules,
+        weakCategories: weakCategories,
+        progressByModuleId: progressByModuleId,
+      );
+
       return {
         'level': userLevel,
         'title': pathData['title'] as String? ?? '学習パス',
         'description': pathData['description'] as String? ?? '',
         'estimatedHours': pathData['estimatedHours'] as int? ?? 0,
         'modules': modules,
+        'weakCategories': weakCategories,
+        'recommendations': recommendations,
       };
     } catch (e) {
       return {
@@ -147,12 +207,17 @@ class _LearningPathContentState extends ConsumerState<_LearningPathContent> {
           final modules = List<Map<String, dynamic>>.from(
             pathData['modules'] as List? ?? [],
           );
+          final recommendations = List<RecommendedModule>.from(
+            pathData['recommendations'] as List? ?? [],
+          );
 
           return SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeaderCard(context, pathData),
+                if (recommendations.isNotEmpty)
+                  _buildRecommendationSection(context, recommendations),
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -265,6 +330,111 @@ class _LearningPathContentState extends ConsumerState<_LearningPathContent> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  /// 診断結果（弱点分野）と過去の受講履歴（進捗が低い／未受講のモジュール）を
+  /// もとにした「あなたへのおすすめ」セクション
+  Widget _buildRecommendationSection(
+    BuildContext context,
+    List<RecommendedModule> recommendations,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.lightbulb, color: Colors.amber, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'あなたへのおすすめ',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            '診断結果とこれまでの受講状況をもとに優先度の高いモジュールを表示しています',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+          ...recommendations.map(
+            (recommendation) =>
+                _buildRecommendationCard(context, recommendation),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecommendationCard(
+    BuildContext context,
+    RecommendedModule recommendation,
+  ) {
+    final module = recommendation.module;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        child: InkWell(
+          onTap: () {
+            // モジュール画面への遷移処理
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.amber.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.amber.withOpacity(0.4)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        module['title'] as String? ?? 'モジュール',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.arrow_forward, color: Colors.grey[400]),
+                  ],
+                ),
+                if (recommendation.reason.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 14, color: Colors.amber[800]),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          recommendation.reason,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.amber[900],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

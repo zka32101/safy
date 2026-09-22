@@ -17,11 +17,15 @@
  *     Claude APIでAI生成する(管理者向け、生成結果は保存前にクライアント側で確認・編集させる)。
  *     デプロイ前に以下のSecretを設定すること:
  *       firebase functions:secrets:set ANTHROPIC_API_KEY
+ *   - onExamAttemptWritten: examAttempts作成/更新(合否確定)をトリガーに受験者へ試験結果を通知する
+ *   - onCertificateIssued: モジュール認定(certificates)発行をトリガーに受験者へ認定完了を通知する
+ *     (Tier 1 Training/Gate3の4モジュール修了証はissueTrainingCertificate内で別途通知済みのため対象外)
+ *   - onQaAnswerCreated: Q&Aフォーラムで自分の質問に新しい回答が投稿された際に質問者へ通知する
  */
 
 import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
@@ -817,6 +821,12 @@ export const checkTrainingDeadline = onSchedule("every day 00:00", async (contex
 // getGate3Metrics: GATE 3 検証メトリクスを集計
 // ─────────────────────────────────────────────
 export const getGate3Metrics = onCall(async (request) => {
+  // 全社横断の内部KPIのため、最低限「認証済みユーザー」のみに制限する。
+  // TODO: 将来的には運用者専用のCustom Claims等でさらに絞り込むことが望ましい。
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
   const tierOneModuleIds = [
     "tier1-platform-tech",
     "tier1-operations",
@@ -978,6 +988,11 @@ export const seedTier1ModulesOnSchedule = onSchedule("2026-09-16 00:00:00 Asia/T
 
 /// ユーザーフィードバック送信
 export const submitUserFeedback = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
   const {
     companyId,
     employeeId,
@@ -994,6 +1009,15 @@ export const submitUserFeedback = onCall(async (request) => {
         "invalid-argument",
         "必須項目が不足しています"
       );
+    }
+
+    // 他人・他社になりすましたフィードバック投稿を防ぐ
+    if (auth.uid !== employeeId) {
+      throw new HttpsError("permission-denied", "本人以外のフィードバックは送信できません");
+    }
+    const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+    if (!employeeSnap.exists) {
+      throw new HttpsError("permission-denied", "この会社に所属する社員が見つかりません");
     }
 
     if (typeof npsScore !== "number" || npsScore < 0 || npsScore > 10) {
@@ -1092,6 +1116,11 @@ function _analyzeSentiment(text: string): string {
 
 /// ライブ認定試験の提出と採点
 export const submitLiveExam = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
   const {
     companyId,
     employeeId,
@@ -1099,6 +1128,7 @@ export const submitLiveExam = onCall(async (request) => {
     answers,
     timeSpentSeconds,
     autoSubmit,
+    backgroundCount,
   } = request.data;
 
   try {
@@ -1107,6 +1137,15 @@ export const submitLiveExam = onCall(async (request) => {
         "invalid-argument",
         "必須項目が不足しています"
       );
+    }
+
+    // 他人になりすまして試験結果を送信できないようにする
+    if (auth.uid !== employeeId) {
+      throw new HttpsError("permission-denied", "本人以外の試験結果は送信できません");
+    }
+    const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+    if (!employeeSnap.exists) {
+      throw new HttpsError("permission-denied", "この会社に所属する社員が見つかりません");
     }
 
     // 試験問題を取得
@@ -1129,16 +1168,50 @@ export const submitLiveExam = onCall(async (request) => {
       ...doc.data(),
     }));
 
-    // 採点
+    // 採点（設問別・分野別の内訳も合わせて集計する）
     let correctCount = 0;
-    for (let i = 0; i < questions.length; i++) {
-      const question = questions[i];
-      const userAnswerKey = `option_${question.correctOption}a`;
-      const userAnswer = answers[i];
+    const questionResults: Array<{
+      questionId: string;
+      order: number;
+      category: string;
+      text: string;
+      correct: boolean;
+      selectedOption: string | null;
+      correctOption: number;
+    }> = [];
+    const categoryBreakdown: Record<string, { correct: number; total: number }> = {};
 
-      if (userAnswer === userAnswerKey) {
+    for (let i = 0; i < questions.length; i++) {
+      const question = questions[i] as {
+        id: string;
+        order: number;
+        category?: string;
+        text: string;
+        correctOption: number;
+      };
+      const category = question.category || "未分類";
+      const userAnswerKey = `option_${question.correctOption}a`;
+      const userAnswer = answers[i] ?? null;
+      const isCorrect = userAnswer === userAnswerKey;
+
+      if (isCorrect) {
         correctCount++;
       }
+
+      questionResults.push({
+        questionId: question.id,
+        order: question.order,
+        category,
+        text: question.text,
+        correct: isCorrect,
+        selectedOption: userAnswer,
+        correctOption: question.correctOption,
+      });
+
+      const bucket = categoryBreakdown[category] || { correct: 0, total: 0 };
+      bucket.total += 1;
+      if (isCorrect) bucket.correct += 1;
+      categoryBreakdown[category] = bucket;
     }
 
     const score = Math.round((correctCount / questions.length) * 100);
@@ -1147,7 +1220,7 @@ export const submitLiveExam = onCall(async (request) => {
     const examAttemptId = db.collection("exams").doc().id;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    // 試験結果を保存
+    // 試験結果を保存（分野別・設問別の分析画面で使用するため内訳も保存する）
     await db
       .collection("companies")
       .doc(companyId)
@@ -1163,6 +1236,9 @@ export const submitLiveExam = onCall(async (request) => {
         totalQuestions: questions.length,
         timeSpentSeconds,
         autoSubmit,
+        backgroundCount: backgroundCount || 0,
+        categoryBreakdown,
+        results: questionResults,
         submittedAt: now,
         createdAt: now,
       });
@@ -1200,6 +1276,11 @@ export const submitLiveExam = onCall(async (request) => {
 
 /// レベル診断の完了・学習パス推奨
 export const completeLevelDiagnostic = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
   const {
     companyId,
     employeeId,
@@ -1215,6 +1296,15 @@ export const completeLevelDiagnostic = onCall(async (request) => {
         "invalid-argument",
         "必須項目が不足しています"
       );
+    }
+
+    // 他人のスキルレベル・診断結果を書き換えられないようにする
+    if (auth.uid !== employeeId) {
+      throw new HttpsError("permission-denied", "本人以外の診断結果は送信できません");
+    }
+    const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+    if (!employeeSnap.exists) {
+      throw new HttpsError("permission-denied", "この会社に所属する社員が見つかりません");
     }
 
     const diagnosticId = db.collection("diagnostics").doc().id;
@@ -1299,6 +1389,11 @@ export const submitQuestion = onCall(async (request) => {
 
   if (auth.uid !== employeeId) {
     throw new HttpsError("permission-denied", "本人以外が投稿できません");
+  }
+
+  const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+  if (!employeeSnap.exists) {
+    throw new HttpsError("permission-denied", "この会社に所属する社員が見つかりません");
   }
 
   // 入力値検証
@@ -1449,3 +1544,288 @@ export const submitAnswer = onCall(async (request) => {
     throw new HttpsError("internal", "回答投稿に失敗しました");
   }
 });
+
+/// Q&Aフォーラム：ベストアンサーの選択・解除（質問投稿者のみ）
+export const setBestAnswer = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
+  const { companyId, questionId, answerId } = request.data as {
+    companyId?: string;
+    questionId?: string;
+    answerId?: string;
+  };
+
+  if (!companyId || !questionId || !answerId) {
+    throw new HttpsError("invalid-argument", "必須項目が不足しています");
+  }
+
+  try {
+    const questionRef = db
+      .collection("companies")
+      .doc(companyId)
+      .collection("qaForum")
+      .doc(questionId);
+    const answerRef = questionRef.collection("answers").doc(answerId);
+
+    await db.runTransaction(async (tx) => {
+      const questionSnap = await tx.get(questionRef);
+      if (!questionSnap.exists) {
+        throw new HttpsError("not-found", "質問が見つかりません");
+      }
+      const questionData = questionSnap.data() as {
+        authorId?: string;
+        bestAnswerId?: string | null;
+      };
+      if (questionData.authorId !== auth.uid) {
+        throw new HttpsError(
+          "permission-denied",
+          "質問の投稿者のみベストアンサーを選択できます"
+        );
+      }
+
+      const answerSnap = await tx.get(answerRef);
+      if (!answerSnap.exists) {
+        throw new HttpsError("not-found", "回答が見つかりません");
+      }
+
+      const currentBestAnswerId = questionData.bestAnswerId ?? null;
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      if (currentBestAnswerId === answerId) {
+        // 同じ回答が指定された場合は選択解除
+        tx.update(answerRef, { isBestAnswer: false, updatedAt: now });
+        tx.update(questionRef, { bestAnswerId: null, updatedAt: now });
+        return;
+      }
+
+      if (currentBestAnswerId) {
+        const prevBestAnswerRef = questionRef
+          .collection("answers")
+          .doc(currentBestAnswerId);
+        tx.update(prevBestAnswerRef, { isBestAnswer: false, updatedAt: now });
+      }
+
+      tx.update(answerRef, { isBestAnswer: true, updatedAt: now });
+      tx.update(questionRef, { bestAnswerId: answerId, updatedAt: now });
+    });
+
+    logger.info(
+      `ベストアンサー更新: 質問${questionId} 回答${answerId} (企業: ${companyId})`
+    );
+
+    return { success: true };
+  } catch (error: any) {
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    logger.error(`ベストアンサー設定に失敗: ${error.message}`, error);
+    throw new HttpsError("internal", "ベストアンサーの設定に失敗しました");
+  }
+});
+
+/// Q&Aフォーラム：回答への「役に立った」リアクションの切り替え（重複防止付き）
+export const toggleAnswerHelpful = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "サインインが必要です");
+  }
+
+  const { companyId, questionId, answerId } = request.data as {
+    companyId?: string;
+    questionId?: string;
+    answerId?: string;
+  };
+
+  if (!companyId || !questionId || !answerId) {
+    throw new HttpsError("invalid-argument", "必須項目が不足しています");
+  }
+
+  try {
+    const answerRef = db
+      .collection("companies")
+      .doc(companyId)
+      .collection("qaForum")
+      .doc(questionId)
+      .collection("answers")
+      .doc(answerId);
+
+    const result = await db.runTransaction(async (tx) => {
+      const answerSnap = await tx.get(answerRef);
+      if (!answerSnap.exists) {
+        throw new HttpsError("not-found", "回答が見つかりません");
+      }
+
+      const data = answerSnap.data() as {
+        helpfulEmployeeIds?: string[];
+      };
+      const helpfulEmployeeIds = data.helpfulEmployeeIds || [];
+      const alreadyReacted = helpfulEmployeeIds.includes(auth.uid);
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      if (alreadyReacted) {
+        tx.update(answerRef, {
+          helpfulEmployeeIds: admin.firestore.FieldValue.arrayRemove(auth.uid),
+          likes: admin.firestore.FieldValue.increment(-1),
+          updatedAt: now,
+        });
+        return { reacted: false };
+      }
+
+      tx.update(answerRef, {
+        helpfulEmployeeIds: admin.firestore.FieldValue.arrayUnion(auth.uid),
+        likes: admin.firestore.FieldValue.increment(1),
+        updatedAt: now,
+      });
+      return { reacted: true };
+    });
+
+    return { success: true, ...result };
+  } catch (error: any) {
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    logger.error(`役に立ったリアクションの切り替えに失敗: ${error.message}`, error);
+    throw new HttpsError("internal", "リアクションの切り替えに失敗しました");
+  }
+});
+
+// ─────────────────────────────────────────────
+// プッシュ通知トリガー群(Firestoreトリガー方式)
+// ─────────────────────────────────────────────
+
+// onExamAttemptWritten: examAttemptsドキュメントの作成/更新(合否確定)をトリガーに
+// 受験者へ試験結果をプッシュ通知する。更新時はpassedが変化した場合のみ通知し、
+// スコア再計算等による多重送信を防ぐ。
+export const onExamAttemptWritten = onDocumentWritten(
+  "companies/{companyId}/examAttempts/{examAttemptId}",
+  async (event) => {
+    const after = event.data?.after;
+    if (!after || !after.exists) return; // 削除時は何もしない
+
+    const before = event.data?.before;
+    const afterData = after.data() as
+      | { employeeId?: string; score?: number; passed?: boolean }
+      | undefined;
+    if (!afterData) return;
+
+    if (before?.exists) {
+      const beforeData = before.data() as { passed?: boolean } | undefined;
+      if (beforeData?.passed === afterData.passed) return;
+    }
+
+    const { employeeId, score, passed } = afterData;
+    if (!employeeId) return;
+
+    const { companyId } = event.params;
+    const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+    const employee = employeeSnap.data() as EmployeeDoc | undefined;
+    if (!employee?.fcmToken) {
+      logger.info(`fcmToken未登録のため試験結果通知をスキップ: ${employeeId}`);
+      return;
+    }
+
+    try {
+      await messaging.send({
+        token: employee.fcmToken,
+        notification: {
+          title: "試験結果のお知らせ",
+          body: passed
+            ? `試験に合格しました(スコア: ${score ?? "-"}点)。安心企業研修Safyでご確認ください。`
+            : `試験の結果はスコア${score ?? "-"}点でした。安心企業研修Safyから再挑戦できます。`,
+        },
+      });
+    } catch (error) {
+      logger.warn(`試験結果通知の送信に失敗しました employeeId=${employeeId}`, error);
+    }
+  }
+);
+
+// onCertificateIssued: モジュール認定(certificates)ドキュメント作成をトリガーに
+// 受験者へ認定完了をプッシュ通知する。
+// ※Tier 1 Training(Gate3)の4モジュール修了証(trainingCertificates)は
+//   issueTrainingCertificate()内で発行と同時に通知済みのため、二重送信を避けるためここでは扱わない。
+export const onCertificateIssued = onDocumentCreated(
+  "companies/{companyId}/certificates/{certificateId}",
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const { employeeId, moduleId, score } = snapshot.data() as {
+      employeeId?: string;
+      moduleId?: string;
+      score?: number;
+    };
+    if (!employeeId) return;
+
+    const { companyId } = event.params;
+    const employeeSnap = await db.doc(`companies/${companyId}/employees/${employeeId}`).get();
+    const employee = employeeSnap.data() as EmployeeDoc | undefined;
+    if (!employee?.fcmToken) {
+      logger.info(`fcmToken未登録のため認定完了通知をスキップ: ${employeeId}`);
+      return;
+    }
+
+    try {
+      await messaging.send({
+        token: employee.fcmToken,
+        notification: {
+          title: "認定完了のお知らせ",
+          body: moduleId
+            ? `モジュール「${moduleId}」の認定が完了しました(スコア: ${score ?? "-"}点)。`
+            : `認定が完了しました(スコア: ${score ?? "-"}点)。`,
+        },
+      });
+    } catch (error) {
+      logger.warn(`認定完了通知の送信に失敗しました employeeId=${employeeId}`, error);
+    }
+  }
+);
+
+// onQaAnswerCreated: Q&Aフォーラムのanswersドキュメント作成をトリガーに、
+// 質問投稿者(自分自身の回答は除く)へ新着回答をプッシュ通知する。
+export const onQaAnswerCreated = onDocumentCreated(
+  "companies/{companyId}/qaForum/{questionId}/answers/{answerId}",
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const answer = snapshot.data() as { authorId?: string } | undefined;
+    if (!answer?.authorId) return;
+
+    const { companyId, questionId } = event.params;
+    const questionSnap = await db
+      .doc(`companies/${companyId}/qaForum/${questionId}`)
+      .get();
+    const question = questionSnap.data() as
+      | { authorId?: string; title?: string }
+      | undefined;
+    if (!question?.authorId) return;
+
+    // 自分の質問に自分で回答した場合(自己解決の追記等)は通知しない
+    if (question.authorId === answer.authorId) return;
+
+    const employeeSnap = await db
+      .doc(`companies/${companyId}/employees/${question.authorId}`)
+      .get();
+    const employee = employeeSnap.data() as EmployeeDoc | undefined;
+    if (!employee?.fcmToken) {
+      logger.info(`fcmToken未登録のためQA回答通知をスキップ: ${question.authorId}`);
+      return;
+    }
+
+    try {
+      await messaging.send({
+        token: employee.fcmToken,
+        notification: {
+          title: "質問に回答がありました",
+          body: `「${question.title ?? "あなたの質問"}」に新しい回答が投稿されました。`,
+        },
+      });
+    } catch (error) {
+      logger.warn(`QA回答通知の送信に失敗しました questionId=${questionId}`, error);
+    }
+  }
+);

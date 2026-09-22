@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../providers/session_provider.dart';
-import '../../widgets/error_retry_view.dart';
 import 'live_exam_screen.dart';
 
 /// 試験選択・受験画面：Tier 2/3 試験の申し込みと受験開始
@@ -11,6 +9,8 @@ class ExamEnrollmentScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // SessionState は StateNotifierProvider が保持する同期的な単純クラスのため、
+    // AsyncValue 用の .when()/.future/.valueOrNull は使わず isSignedIn で判定する。
     final session = ref.watch(sessionProvider);
 
     if (!session.isSignedIn) {

@@ -1,27 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_functions/cloud_functions.dart';
-import '../../../providers/service_providers.dart';
+import '../../../providers/firebase_providers.dart';
 import '../../../providers/session_provider.dart';
 import '../../../widgets/error_retry_view.dart';
 import '../../../widgets/skeleton_loader.dart';
 
 final gate3MetricsProvider = FutureProvider<Map<String, double>>((ref) async {
-  try {
-    final result = await FirebaseFunctions.instance.httpsCallable('getGate3Metrics').call();
-    return Map<String, double>.from(result.data ?? {});
-  } catch (e) {
-    return {
-      'completionRate': 0,
-      'platformTechRate': 0,
-      'operationsRate': 0,
-      'contentProductionRate': 0,
-      'gtmStrategyRate': 0,
-      'errorRate': 0,
-      'apiAvailability': 0,
-      'certificateVariance': 0,
-    };
+  // firestoreProvider と同じ DI パターンに揃え、FirebaseFunctions.instance を
+  // 直接ハードコードしない(テスト時に差し替え可能にする)。
+  final functions = ref.watch(functionsProvider);
+  final result = await functions.httpsCallable('getGate3Metrics').call();
+
+  final rawData = result.data;
+  if (rawData is! Map) {
+    // データ不整合はここで検知し、AsyncValue.error として画面側に伝播させる。
+    // 以前はここで例外を握りつぶして全項目0のダミー値を返しており、
+    // 取得失敗なのか実際に指標が悪いのか見分けがつかなくなっていた。
+    throw StateError('GATE 3 指標データの形式が不正です');
   }
+
+  // Cloud Functions からの数値は int で返ってくることがあり、
+  // Map<String, double>.from() では実行時に型キャストエラーになりうるため
+  // num -> double へ安全に変換する。
+  return rawData.map(
+    (key, value) => MapEntry(key.toString(), (value as num?)?.toDouble() ?? 0.0),
+  );
 });
 
 /// GATE 3 Verification Dashboard
@@ -43,6 +46,20 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
   static const double API_AVAILABILITY_THRESHOLD = 99.5; // API 可用性 ≥ 99.5%
   static const double CERTIFICATE_VARIANCE_THRESHOLD = 5.0; // ±5%
 
+  /// 各指標の合格判定ロジックを一箇所に集約する。
+  /// 以前は「項目カード」と「検証サマリー」で判定条件(< と <=)がズレており、
+  /// 同じ実績値でもカードとサマリーで合否表示が食い違うことがあった。
+  static bool _isPassed({
+    required double actual,
+    required double threshold,
+    bool isInverse = false,
+    bool isVariance = false,
+  }) {
+    if (isInverse) return actual < threshold; // 例: エラーレート < 1%
+    if (isVariance) return actual.abs() <= threshold; // 例: 誤差 ±5% 以内
+    return actual >= threshold; // 例: 修了率 ≥ 75%
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,24 +69,21 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
       ),
       body: Consumer(
         builder: (context, ref, child) {
-          final sessionAsync = ref.watch(sessionProvider);
+          // SessionState (lib/providers/session_provider.dart) は同期的な単純クラスで
+          // AsyncValue ではないため、.when()/.future/.valueOrNull は呼べない
+          // (呼ぶとコンパイルエラーになる)。isSignedIn/isAdmin を直接参照する。
+          final session = ref.watch(sessionProvider);
 
-          return sessionAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (err, stack) => ErrorRetryView(
-              error: err.toString(),
-              onRetry: () => ref.refresh(sessionProvider),
-            ),
-            data: (session) {
-              if (session == null || !session.isAdmin) {
-                return const Center(
-                  child: Text('管理者権限が必要です'),
-                );
-              }
+          if (!session.isSignedIn) {
+            return const Center(child: Text('セッションが見つかりません'));
+          }
+          if (!session.isAdmin) {
+            return const Center(
+              child: Text('管理者権限が必要です'),
+            );
+          }
 
-              return _buildGate3Dashboard(context, ref);
-            },
-          );
+          return _buildGate3Dashboard(context, ref);
         },
       ),
     );
@@ -79,9 +93,9 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
     final metricsAsync = ref.watch(gate3MetricsProvider);
 
     return metricsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const SkeletonList(),
       error: (err, stack) => ErrorRetryView(
-        error: err.toString(),
+        message: 'GATE 3 指標の取得に失敗しました: $err',
         onRetry: () => ref.refresh(gate3MetricsProvider),
       ),
       data: (metrics) => _buildDashboardContent(context, ref, metrics),
@@ -89,6 +103,30 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
   }
 
   Widget _buildDashboardContent(BuildContext context, WidgetRef ref, Map<String, double> metrics) {
+    final completionRate = metrics['completionRate'] ?? 0;
+    final platformTechRate = metrics['platformTechRate'] ?? 0;
+    final operationsRate = metrics['operationsRate'] ?? 0;
+    final contentProductionRate = metrics['contentProductionRate'] ?? 0;
+    final gtmStrategyRate = metrics['gtmStrategyRate'] ?? 0;
+    final errorRate = metrics['errorRate'] ?? 100;
+    final apiAvailability = metrics['apiAvailability'] ?? 0;
+    final certificateVariance = metrics['certificateVariance'] ?? 100;
+
+    // 8項目の合否をここで一度だけ計算し、項目カードと検証サマリーの両方で
+    // 同じ結果(itemResults)を参照させることで判定のズレを防ぐ。
+    final itemResults = <String, bool>{
+      '全体修了率': _isPassed(actual: completionRate, threshold: COMPLETION_RATE_THRESHOLD),
+      'Platform技術モジュール': _isPassed(actual: platformTechRate, threshold: MODULE_COMPLETION_THRESHOLD),
+      'Operations モジュール': _isPassed(actual: operationsRate, threshold: MODULE_COMPLETION_THRESHOLD),
+      'Content Production モジュール': _isPassed(actual: contentProductionRate, threshold: MODULE_COMPLETION_THRESHOLD),
+      'GTM Strategy モジュール': _isPassed(actual: gtmStrategyRate, threshold: MODULE_COMPLETION_THRESHOLD),
+      'エラーレート': _isPassed(actual: errorRate, threshold: ERROR_RATE_THRESHOLD, isInverse: true),
+      'API 可用性': _isPassed(actual: apiAvailability, threshold: API_AVAILABILITY_THRESHOLD),
+      '修了証発行数': _isPassed(actual: certificateVariance, threshold: CERTIFICATE_VARIANCE_THRESHOLD, isVariance: true),
+    };
+    final passedCount = itemResults.values.where((p) => p).length;
+    final totalCount = itemResults.length;
+
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -108,12 +146,14 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                const SizedBox(height: 12),
+                _buildProgressOverview(passedCount, totalCount),
                 const SizedBox(height: 16),
                 _buildVerificationItem(
                   title: '全体修了率',
                   subtitle: '対象: 全42名 FTE',
                   threshold: COMPLETION_RATE_THRESHOLD,
-                  actual: metrics['completionRate'] ?? 0,
+                  actual: completionRate,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -121,7 +161,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'Platform技術モジュール',
                   subtitle: 'tier1-platform-tech',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: metrics['platformTechRate'] ?? 0,
+                  actual: platformTechRate,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -129,7 +169,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'Operations モジュール',
                   subtitle: 'tier1-operations',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: metrics['operationsRate'] ?? 0,
+                  actual: operationsRate,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -137,7 +177,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'Content Production モジュール',
                   subtitle: 'tier1-content-production',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: metrics['contentProductionRate'] ?? 0,
+                  actual: contentProductionRate,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -145,7 +185,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'GTM Strategy モジュール',
                   subtitle: 'tier1-gtm-strategy',
                   threshold: MODULE_COMPLETION_THRESHOLD,
-                  actual: metrics['gtmStrategyRate'] ?? 0,
+                  actual: gtmStrategyRate,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -153,7 +193,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'エラーレート',
                   subtitle: 'Cloud Functions 全体',
                   threshold: ERROR_RATE_THRESHOLD,
-                  actual: metrics['errorRate'] ?? 0,
+                  actual: errorRate,
                   unit: '%',
                   isInverse: true,
                 ),
@@ -162,7 +202,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: 'API 可用性',
                   subtitle: 'Sep 16-22 期間',
                   threshold: API_AVAILABILITY_THRESHOLD,
-                  actual: metrics['apiAvailability'] ?? 0,
+                  actual: apiAvailability,
                   unit: '%',
                 ),
                 const SizedBox(height: 12),
@@ -170,7 +210,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                   title: '修了証発行数',
                   subtitle: '期待値との誤差',
                   threshold: CERTIFICATE_VARIANCE_THRESHOLD,
-                  actual: metrics['certificateVariance'] ?? 0,
+                  actual: certificateVariance,
                   unit: '%',
                   isVariance: true,
                 ),
@@ -179,12 +219,58 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
           ),
 
           // Summary & Recommendation
-          _buildSummary(context, metrics),
+          _buildSummary(context, metrics, itemResults, passedCount, totalCount),
 
           // Action Buttons
           _buildActionButtons(context),
 
           const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  /// 認定進捗の全体像を一目で把握できるよう、合格数と進捗バーを表示する。
+  Widget _buildProgressOverview(int passedCount, int totalCount) {
+    final ratio = totalCount == 0 ? 0.0 : passedCount / totalCount;
+    final allPassed = totalCount > 0 && passedCount == totalCount;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '認定進捗',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+              Text(
+                '$passedCount / $totalCount 項目が合格',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: allPassed ? Colors.green[700] : Colors.orange[800],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: ratio,
+              minHeight: 8,
+              backgroundColor: Colors.grey[300],
+              color: allPassed ? Colors.green : Colors.orange,
+            ),
+          ),
         ],
       ),
     );
@@ -308,11 +394,22 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
     bool isInverse = false,
     bool isVariance = false,
   }) {
-    final passed = isInverse
-        ? actual <= threshold
-        : isVariance
-            ? actual <= threshold
-            : actual >= threshold;
+    final passed = _isPassed(
+      actual: actual,
+      threshold: threshold,
+      isInverse: isInverse,
+      isVariance: isVariance,
+    );
+
+    // 進捗バー: 「大きいほど良い」指標は 実績/100 を、
+    // 「小さいほど良い」指標(エラーレート・誤差)は 1 - 実績/(閾値の2倍) を目安に正規化する。
+    double progressValue;
+    if (isInverse || isVariance) {
+      final denom = threshold > 0 ? threshold * 2 : 1;
+      progressValue = (1 - (actual.abs() / denom)).clamp(0.0, 1.0);
+    } else {
+      progressValue = (actual / 100).clamp(0.0, 1.0);
+    }
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -393,7 +490,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                       ),
                     ),
                     Text(
-                      '${isInverse ? '≤' : '≥'} ${threshold.toStringAsFixed(1)}$unit',
+                      '${isInverse ? '<' : isVariance ? '≤' : '≥'} ${threshold.toStringAsFixed(1)}$unit',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -436,7 +533,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                       ),
                     ),
                     Text(
-                      isInverse
+                      isInverse || isVariance
                           ? '${(threshold - actual).toStringAsFixed(1)}$unit'
                           : '+${(actual - threshold).toStringAsFixed(1)}$unit',
                       style: TextStyle(
@@ -450,24 +547,38 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progressValue,
+              minHeight: 6,
+              backgroundColor: Colors.grey[200],
+              color: passed ? Colors.green : Colors.red,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSummary(BuildContext context, Map<String, double> metrics) {
-    final completionPassed = (metrics['completionRate'] ?? 0) >= COMPLETION_RATE_THRESHOLD;
-    final platformTechPassed = (metrics['platformTechRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
-    final operationsPassed = (metrics['operationsRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
-    final contentProdPassed = (metrics['contentProductionRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
-    final gtmStrategyPassed = (metrics['gtmStrategyRate'] ?? 0) >= MODULE_COMPLETION_THRESHOLD;
-    final errorRatePassed = (metrics['errorRate'] ?? 100) < ERROR_RATE_THRESHOLD;
-    final apiAvailabilityPassed = (metrics['apiAvailability'] ?? 0) >= API_AVAILABILITY_THRESHOLD;
-    final certificateVariancePassed = (metrics['certificateVariance'] ?? 100) <= CERTIFICATE_VARIANCE_THRESHOLD;
+  Widget _buildSummary(
+    BuildContext context,
+    Map<String, double> metrics,
+    Map<String, bool> itemResults,
+    int passedCount,
+    int totalCount,
+  ) {
+    final allPassed = totalCount > 0 && passedCount == totalCount;
 
-    final allPassed = completionPassed && platformTechPassed && operationsPassed &&
-                      contentProdPassed && gtmStrategyPassed && errorRatePassed &&
-                      apiAvailabilityPassed && certificateVariancePassed;
+    final completionRate = metrics['completionRate'] ?? 0;
+    final errorRate = metrics['errorRate'] ?? 100;
+    final apiAvailability = metrics['apiAvailability'] ?? 0;
+    final certificateVariance = metrics['certificateVariance'] ?? 100;
+    final modulePassed = (itemResults['Platform技術モジュール'] ?? false) &&
+        (itemResults['Operations モジュール'] ?? false) &&
+        (itemResults['Content Production モジュール'] ?? false) &&
+        (itemResults['GTM Strategy モジュール'] ?? false);
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -509,7 +620,7 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                     Text(
                       allPassed
                           ? 'すべての検証基準を満たしています'
-                          : '一部の検証基準が満たされていません',
+                          : '$totalCount項目中$passedCount項目のみ基準を満たしています',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey[700],
@@ -539,24 +650,30 @@ class _Gate3DashboardScreenState extends ConsumerState<Gate3DashboardScreen> {
                 ),
                 const SizedBox(height: 8),
                 _buildSummaryLine(
-                  '全体修了率: 76.5% (基準: ≥75%)',
-                  true,
+                  '全体修了率: ${completionRate.toStringAsFixed(1)}% '
+                  '(基準: ≥${COMPLETION_RATE_THRESHOLD.toStringAsFixed(0)}%)',
+                  itemResults['全体修了率'] ?? false,
                 ),
                 _buildSummaryLine(
-                  'モジュール別完了率: 全て ≥70%',
-                  true,
+                  modulePassed
+                      ? 'モジュール別完了率: 全て ≥${MODULE_COMPLETION_THRESHOLD.toStringAsFixed(0)}%'
+                      : 'モジュール別完了率: 一部が基準未達 (基準: ≥${MODULE_COMPLETION_THRESHOLD.toStringAsFixed(0)}%)',
+                  modulePassed,
                 ),
                 _buildSummaryLine(
-                  'エラーレート: 0.8% (基準: <1%)',
-                  true,
+                  'エラーレート: ${errorRate.toStringAsFixed(1)}% '
+                  '(基準: <${ERROR_RATE_THRESHOLD.toStringAsFixed(0)}%)',
+                  itemResults['エラーレート'] ?? false,
                 ),
                 _buildSummaryLine(
-                  'API 可用性: 99.8% (基準: ≥99.5%)',
-                  true,
+                  'API 可用性: ${apiAvailability.toStringAsFixed(1)}% '
+                  '(基準: ≥${API_AVAILABILITY_THRESHOLD.toStringAsFixed(1)}%)',
+                  itemResults['API 可用性'] ?? false,
                 ),
                 _buildSummaryLine(
-                  '修了証発行誤差: 2.3% (基準: ≤5%)',
-                  true,
+                  '修了証発行誤差: ${certificateVariance.toStringAsFixed(1)}% '
+                  '(基準: ≤${CERTIFICATE_VARIANCE_THRESHOLD.toStringAsFixed(0)}%)',
+                  itemResults['修了証発行数'] ?? false,
                 ),
               ],
             ),

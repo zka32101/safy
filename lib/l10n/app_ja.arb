@@ -31,6 +31,7 @@
   "auth_invalidEmail": "有効なメールアドレスを入力してください",
   "auth_passwordTooShort": "パスワードは6文字以上である必要があります",
   "auth_passwordsDoNotMatch": "パスワードが一致しません",
+  "auth_signInRequired": "ログインが必要です",
 
   "onboarding_welcome": "Safyへようこそ",
   "onboarding_selectIndustry": "業種を選択してください",
@@ -129,5 +130,95 @@
   "error_notFound": "見つかりません",
   "error_unauthorized": "認可されていません",
   "error_tryAgain": "もう一度試してください",
-  "error_contactSupport": "サポートに連絡してください"
+  "error_contactSupport": "サポートに連絡してください",
+
+  "nav_home": "ホーム",
+  "nav_learningPath": "学習パス",
+  "nav_qaForum": "Q&A",
+  "nav_myGrowth": "マイ成長",
+
+  "home_requiredTrainingTitle": "あなたの必須研修",
+  "home_sessionNotFound": "セッションが見つかりません",
+  "home_adminMenuTooltip": "管理者メニュー",
+  "home_industryLoadError": "業種情報の読み込みに失敗しました",
+  "home_industryNotFound": "業種情報が見つかりませんでした",
+  "home_modulesLoadError": "研修モジュールの読み込みに失敗しました",
+  "home_noModules": "研修モジュールがまだありません",
+  "home_tier1Title": "Tier 1 Training",
+  "home_tier1Period": "Sep 16-22 自習期間",
+  "home_tier1Description": "4つのモジュール、計16時間",
+  "home_liveExamTitle": "ライブ認定試験",
+  "home_liveExamPeriod": "Oct 10-20 実施",
+  "home_liveExamDescription": "Tier 2/3 試験に挑戦",
+  "home_monthlyRequiredModule": "今月の必須モジュール",
+  "home_requiredBadge": "必須",
+  "home_optionalBadge": "任意",
+  "home_freeTrialBadge": "無料体験",
+  "home_deadlineUpcoming": "期限間近",
+  "home_deadlineOverdue": "期限超過",
+
+  "learningPath_customTitle": "カスタム学習パス",
+  "learningPath_loadErrorTitle": "学習パス読み込みエラー",
+  "learningPath_levelBeginner": "初級者向け",
+  "learningPath_levelIntermediate": "中級者向け",
+  "learningPath_levelAdvanced": "上級者向け",
+  "learningPath_recommendedModulesTitle": "推奨学習モジュール",
+  "learningPath_noModules": "このレベル向けのモジュールはまだ登録されていません",
+  "learningPath_estimatedHours": "推定学習時間：{hours}時間",
+  "@learningPath_estimatedHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "learningPath_moduleFallbackTitle": "モジュール",
+
+  "qaForum_title": "Q&Aフォーラム",
+  "qaForum_searchHint": "質問を検索...",
+  "qaForum_sortRecent": "最新",
+  "qaForum_sortPopular": "人気",
+  "qaForum_sortUnanswered": "未回答",
+  "qaForum_noQuestions": "質問がまだありません",
+  "qaForum_myQuestionBadge": "自分",
+  "qaForum_anonymousAuthor": "匿名",
+  "qaForum_askQuestionTitle": "質問を投稿",
+  "qaForum_titleFieldLabel": "タイトル*",
+  "qaForum_titleFieldHint": "質問のタイトルを入力",
+  "qaForum_descriptionFieldLabel": "詳細",
+  "qaForum_descriptionFieldHint": "詳しく説明してください（オプション）",
+  "qaForum_categoryFieldLabel": "カテゴリ",
+  "qaForum_categoryContent": "コンテンツ理解",
+  "qaForum_categorySkillApplication": "スキル応用",
+  "qaForum_categoryToolsSystem": "ツール・システム",
+  "qaForum_categoryCareer": "キャリア",
+  "qaForum_categoryOther": "その他",
+  "qaForum_postButton": "投稿",
+  "qaForum_titleRequiredError": "タイトルを入力してください",
+  "qaForum_postSuccess": "質問を投稿しました",
+  "qaForum_postError": "投稿に失敗しました",
+  "qaForum_minutesAgo": "{minutes}分前",
+  "@qaForum_minutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "qaForum_hoursAgo": "{hours}時間前",
+  "@qaForum_hoursAgo": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "qaForum_daysAgo": "{days}日前",
+  "@qaForum_daysAgo": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  }
 }

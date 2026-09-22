@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +10,8 @@ import 'features/onboarding/startup_gate.dart';
 import 'firebase_options.dart';
 import 'providers/localization_provider.dart'
     show localizationProvider, initializeLocalizationPreferences;
+import 'providers/service_providers.dart' show pushNotificationServiceProvider;
+import 'services/secure_storage_service.dart';
 import 'widgets/offline_banner.dart';
 import 'widgets/force_update_gate.dart';
 
@@ -23,7 +27,32 @@ void main() async {
     }
   } catch (_) {}
   await initializeLocalizationPreferences();
-  runApp(const ProviderScope(child: SafyApp()));
+
+  // runApp前(ProviderScope未構築)でもfirestoreProviderパターンを使えるよう、
+  // ProviderContainerを先に作りUncontrolledProviderScopeでアプリに引き継ぐ。
+  final container = ProviderContainer();
+  // プッシュ通知のパーミッションリクエスト・FCMトークン登録は、既に企業へ参加済み
+  // (companyIdが端末に保存済み)の場合のみ行う。未参加(オンボーディング前)の場合は
+  // Employeeドキュメントがまだ無くトークンの保存先が無いため、
+  // EmployeeService.joinViaInviteCode/createAdmin完了後の初回起動時に登録される。
+  // 失敗しても起動は止めない(通知が使えないだけでアプリ自体は継続利用可能なため)。
+  unawaited(_registerPushNotificationTokenIfJoined(container));
+
+  runApp(UncontrolledProviderScope(container: container, child: const SafyApp()));
+}
+
+Future<void> _registerPushNotificationTokenIfJoined(ProviderContainer container) async {
+  try {
+    final companyId = await SecureStorageService.getCompanyId();
+    final employeeId = FirebaseAuth.instance.currentUser?.uid;
+    if (companyId == null || employeeId == null) return;
+    await container.read(pushNotificationServiceProvider).registerToken(
+          companyId: companyId,
+          employeeId: employeeId,
+        );
+  } catch (_) {
+    // 通知権限拒否・端末未対応等で失敗してもアプリ起動は継続する。
+  }
 }
 
 class SafyApp extends ConsumerWidget {
