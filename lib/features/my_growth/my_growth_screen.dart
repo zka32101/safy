@@ -15,7 +15,7 @@ class MyGrowthScreen extends ConsumerWidget {
     final radarAsync = ref.watch(myGrowthRadarProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('マイ成長')),
+      appBar: AppBar(title: const Text('成長')),
       body: radarAsync.when(
         data: (scores) {
           if (scores.isEmpty) {

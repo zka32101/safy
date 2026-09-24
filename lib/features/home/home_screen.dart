@@ -119,7 +119,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.insights),
-            tooltip: 'マイ成長',
+            tooltip: '成長',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const MyGrowthScreen()),
             ),

@@ -64,7 +64,7 @@ class _AppShellState extends ConsumerState<AppShell> {
           BottomNavigationBarItem(
             icon: Icon(Icons.trending_up_outlined),
             activeIcon: Icon(Icons.trending_up),
-            label: 'マイ成長',
+            label: '成長',
           ),
         ],
       ),
